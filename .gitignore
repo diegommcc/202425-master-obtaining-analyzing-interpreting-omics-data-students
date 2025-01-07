@@ -1,0 +1,9 @@
+202425-master-obtaining-analyzing-interpreting-omics-data-students.Rproj
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+**/data/
+**/*-log/
+.DS_Store
+

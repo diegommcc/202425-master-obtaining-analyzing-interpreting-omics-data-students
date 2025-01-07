@@ -1,0 +1,311 @@
+---
+title: "04 - Brief introduction to tidyverse"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+```
+
+
+## Introduction 
+
+So far, we have been learning the basics of R. For instance, we have seen how to manipulate matrices and data frames using the `apply()`-family functions, access to them, modify specific elements, etc. Besides this way to code in R, there is an alternative specially meant to manipulate data frames. This family of R packages belong to what is called `tidyverse`, and they just try to make these manipulations easier to us and provide functions to do other kind of tasks that won't be covered in this subject, such as statistical modelling. All these packages share an underlying design philosophy, grammar, and data structures. We have just talked about one: `ggplot2`. The packages we will covered here follow the same idea. 
+
+The objective of this part it to get familiar with some of the functions, but mastering this way of programming takes much more time. If you don't know how to solve a problem using these packages, just try to solve it using R-base, it does not matter! The idea is to add another weapon to your armory. 
+
+## Some comments before starting
+
+### Tidy data
+
+Before starting with some of the functions, we need to introduce tidy data. This is how a dataset has to be structured to work with `ggplot2` and other tidyverse packages. Just to put an example, check the image below: 
+
+![Tidy vs untidy data.](images/tidy-data.png)
+
+The most important points are: 
+
+1. Every observation of a variable should be in a different row, i.e., each sample must be an individual row. 
+2. Each variable should be in a different column, i.e., each feature taken of each individual must be an individual columns.
+3. There should be one table for each type of data. 
+
+In the example above, we have a first table in which the column key contains what seem to be two different variables: cases and population. Then, the column value contains the values of each variable. If we were to plot the number of cases vs the population in a scatter plot using ggplot, we couldn't do it because the format is not correct. We make the data tidy by separating these two variables in two different columns, so that each row correspond to each sample (in this case, each country). 
+
+You will find many cases where data are not properly structured to work with `ggplot2` or other tidyverse packages. I usually carry out these transformations using the `reshape2` or `tidyr` R packages. Not needed now, but keep them in mind if you find this kind of problems, you will see them in further modules. 
+
+### Pipes in R
+
+From now on, you will see `%>%` and `|>` a lot o times. They are just pipes, like the ones you studied when you learned bash (`|`). They take whatever is before them, and pass it to the function on the right. Both are equivalent, the only difference is that `|>` belong to R base (included not a long time ago) and `%>%` was introduced by the `tidyverse` R packages. Use the one you most like. 
+
+Their objective is to make your code more readable, and allow the possibility to concatenate several functions without having to save intermediate objects. 
+
+```{r, eval = FALSE}
+# the following two expressions are equivalent
+x %>% f(y)  
+f(x, y)
+# these two are also equivalent
+y %>% f(x, ., z) 
+f(x, y, z )
+```
+
+
+## The `dplyr` R package
+
+Let's load a dataset to start showing some functions. 
+
+`dplyr` aims to provide functions for basic data manipulations. These verbs can be organised into three categories based on the component of the dataset they work with:
+
+1. Rows:
+  * `filter()` chooses rows based on column values.
+  * `slice()` chooses rows based on location.
+  * `arrange()` changes the order of the rows.
+2. Columns:
+  * `select()` changes whether or not a column is included.
+  * `rename()` changes the name of columns.
+  * `mutate()` changes the values of columns and creates new columns.
+  * `relocate()` changes the order of the columns.
+3. Groups of rows:
+  * `group_by()` + `summarize()` collapses a group into a single row.
+  
+We won't use all of them, but the most used for getting familiar with them. 
+
+### Loading data and R packages
+
+```{r}
+suppressMessages(library("datasets"))
+suppressMessages(library("dplyr"))
+data(iris)
+iris <- iris %>% mutate(.before = 1, ID = paste0("ID_", row_number()))
+```
+
+```{r}
+iris %>% head()
+```
+
+We are going to use `glimpse()` to see what a data frame comprises:
+
+```{r}
+glimpse(iris)
+```
+
+### `filter()`
+
+With `filter()`, you can pick rows based on the values of specific columns. For instance, let's make a table where there are only cases `Species` are _Setosa_ and `Sepal.Width` is less than 4.5. 
+
+```{r}
+iris %>% filter(Species == "setosa", Sepal.Width <= 4.5) %>% glimpse()
+```
+
+Now, instead of 150 rows, we have the 50 that meet the criteria. Remember that the conditions stated in `filter()` are AND statements. 
+
+### `arrange()`
+
+It allows us to sort a data frame accroding to the values of a given column. 
+
+```{r}
+iris %>% arrange(desc(Petal.Length)) %>% head()
+```
+
+As I said, we can do these operations using R-base, but from my view this is way easier. the following code should return the dsame result: 
+
+```{r}
+iris[order(iris$Petal.Length, decreasing = TRUE), ] %>% head()
+```
+
+
+### `select()`
+
+Instead of rows, `select()` can pick specific columns. This function is equivalent to access to a data frame using the ways we learnt. It isn't that useful, but when you are operating with `dplyr` and need to choose specific columns, it allows to do it without creating intermediate variables: 
+
+```{r}
+iris %>% arrange(Sepal.Length) %>% select(Species, ID) %>% head()
+```
+
+```{r}
+iris %>% arrange(Species) %>% select(-ID) %>% head()
+```
+
+
+### `mutate()`
+
+This is probably the function I use the most. It allows to modify existing and create new columns in a data frame using a syntax very intuitive. Again, you could do the same with R-base: 
+
+```{r}
+iris %>% mutate(
+  Ratio.Width = Sepal.Width / Petal.Width,
+  Rectangular.area.Sepal = Sepal.Width * Sepal.Length,
+  Rectangular.area.Petal = Petal.Width * Petal.Length,
+) %>% arrange(desc(Rectangular.area.Sepal)) %>% 
+  select(Species, Rectangular.area.Sepal) %>% head()
+```
+
+In the previous line of code, we have created three new columns that now can be used to do further operations. Now, let's write the equivalent code in R-base!
+
+```{r}
+
+```
+
+
+We can couple `mutate()` with `case_when()`, a generalized version of the `ifelse()` function. For instance, imagine that now we want to classify these cases according to a categorical variable, and create a column containing that information: 
+
+```{r}
+iris.mod <- iris %>% mutate(
+  Ratio.Width = Sepal.Width / Petal.Width,
+  Class.Ratio.Wdith = case_when(
+    Ratio.Width >= mean(Ratio.Width) ~ "Big",
+    TRUE ~ "Small"
+  )
+)
+iris.mod %>% head()
+```
+
+Now, do it using R-base: 
+
+```{r}
+
+```
+
+
+Finally, we can use the `across()` function to modify several columns using only one line of code. No worries if this seems to you a bit complex, it is not needed for this course!
+
+```{r}
+iris.mod %>% mutate(across(c(Petal.Length, Ratio.Width), round)) %>% head()
+```
+
+We can use helper functions to make the selection of columns much easier: `all_of()`, `where()`, `start_with()` or `ends_with()`. Check <https://dplyr.tidyverse.org/reference/across.html> for more examples. 
+
+```{r}
+iris.mod %>% mutate(across(where(is.double), ~ .x * 100)) %>% head()
+```
+
+
+### Groupping with `group_by()` and `summarize()`
+
+With `group_by()` and `summarize()`, we can compute grouped statistics according to different columns. They are the equivalents to `aggregate()` and `by()` of R-base. 
+
+```{r}
+iris.mod %>% group_by(Species) %>% 
+  summarize(Mean.Ratio.Width = mean(Ratio.Width))
+```
+
+We can use more than one column to classify the samples: 
+
+```{r}
+iris.mod %>% group_by(Species, Class.Ratio.Wdith) %>% 
+  summarize(Mean.Ratio.Width = mean(Ratio.Width))
+```
+
+We can just count the number of samples according to the groups we have just created. 
+
+```{r}
+iris.mod %>% group_by(Species, Class.Ratio.Wdith) %>% summarize(N_samples = n())
+```
+
+We can also summarize several columns at the same time using the `across` function:
+
+```{r}
+iris.mod %>% group_by(Species, Class.Ratio.Wdith) %>% 
+  summarize(across(starts_with("Sepal"), ~mean(.x, na.rm = T)))
+```
+
+
+```{r}
+iris.mod %>% group_by(Species, Class.Ratio.Wdith) %>% summarize(
+  across(starts_with("Sepal"), list(Mean = mean, Sd = sd), na.rm = TRUE)
+)
+```
+
+
+### Combining different data frames
+
+According to the tidy format, it is very typical to store your data in different tables. If we need to merge them to make a plot (for instance), we need to correctly align the two tables, otherwise we would be mixing information belonging to different samples. This is done by `merge()` in R-base and by `left_join()` (and the rest of alike functions) in `tidyverse`. Let's put some examples from this article (<https://dplyr.tidyverse.org/articles/two-table.html>): 
+
+```{r}
+library("nycflights13")
+flights2 <- flights %>% select(year:day, hour, origin, dest, tailnum, carrier)
+```
+
+In this datasset, data are separated into different data frames: 
+
+```{r}
+flights2 <- flights %>% select(year:day, hour, origin, dest, tailnum, carrier)
+glimpse(flights2)
+glimpse(airlines)
+glimpse(weather)
+```
+
+Between `fligths2` and `airlines`, `carrier` is the column that is shared by the two data frames and hence ban be used to merge them. 
+
+```{r}
+flights2 %>% head()
+airlines %>% head()
+```
+
+Imagine that we need to append the information coming from `airlines` to `flights2`: 
+
+```{r}
+flights2 %>% left_join(airlines) %>% head()
+```
+
+`left_join()` has automatically detected the shared column (usingc column names). This will always work as long as the column names are the same in the two data frames:
+
+```{r}
+flights2 %>% left_join(weather)
+```
+
+However, sometimes we have to explicitly state the columns to be used. There are two main ways: 
+
+1. By using a column shared between the two data frames:
+
+```{r}
+flights2 %>% left_join(planes, by = "tailnum") %>% head()
+```
+
+2. By stating the two columns to be used whenever they have different names:
+
+```{r}
+flights2 %>% left_join(airports, c("dest" = "faa")) %>% head()
+```
+
+3. By using the `join_by()` function:
+
+```{r}
+flights2 %>% left_join(airports, join_by(dest == faa)) %>% head()
+```
+
+#### Types of join
+
+So far, we have been keeping all the information on the left data frame, and appending (if possible) the information coming from the right one. However, we could keep only the shared elements between the two data frames, or keeping all the entries coming from the two data frames. This is done using the `inner_join()`, `right_join()`, and `full_join()` functions. Check the documentation and see their differences! 
+
+Also, check the `merge()` function (R-base version for these operations). 
+
+#### Merging two data frames containing the same information. 
+
+Check the following functions: `intersect()`, `union()`, and `setdiff()` (from the `dplyr` R package). They expect a data frame with the same structure, and will give you a data frame with the wanted combination depending on the function. See the following figure to get an intuition about them: 
+
+![`intersect()`, `union()`, and `setdiff()` functions.](images/combining-dfs.png)
+
+
+### About `tidyverse` vs R-base
+
+From my view, `tidyverse` (and specifically, `dplyr`) is just an alternative that makes life easier many times. However, this does not mean that you should only learn this way of coding in R and forget about R-base. There will be countless situations where `tidyverse` won't be the best solution or simply a valid solution. For instance, these functions are pretty handy to work with data frames, but they cannot handle (or at least the functions we have talked about in this course) sparse matrices, a special type of matrix where the most frequent entry is zero (no worries, we will talk about them in the future).
+
+We are talking about these functions because I think learning R without mentioning them does not make sense nowadays, but please, learn the R basics we previously covered, you will need it! Check this link for a comparison between `dplyr` and R-base: <https://dplyr.tidyverse.org/articles/base.html>. 
+

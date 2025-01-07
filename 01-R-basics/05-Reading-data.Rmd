@@ -1,0 +1,187 @@
+---
+title: "03 - Data visualization"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+projectPath <- here::here()
+```
+
+
+## Introduction 
+
+R offers different ways to read from and write data to disk. Let's put some examples that will be needed during the course. 
+
+**Note:** this Rmarkdown can be only run if the `projectPath` function is correctly set. You can either open the R session using the Rproject file, or manually set it. 
+
+## Using R-base functions
+
+These are the main functions that you will need to use, although there are other options. 
+
+* `read.table`, `read.csv`, `read.delim` for reading tabular data.
+* `readLines`, for reading lines of a text file.
+
+These functions have an equivalent to write data in the corresponding format: 
+
+* `write.table` for writing tabular data to text files. 
+* `writeLines` for writing data line-by-line. 
+
+Let's put some examples. First, let's create a data frame to be written to disk: 
+
+```{r}
+df.example <- data.frame(
+  Sample_ID = paste0("Sample_ID_", 1:500),
+  Class = sample(paste0("Class_", 1:4), 500, replace = T) %>% as.factor(),
+  Num_Var_1 = rnorm(500, mean = 60, sd = 10),
+  Num_Var_2 = rpois(500, lambda = 2),
+  row.names = paste0("Sample_ID_", 1:500)
+)
+df.example %>% head()
+```
+
+Now, we can write it as a TSV/CSV. The most important thing when reading/writing data to disk is the path were the files are located. If you have opened the Rproject, the following code should work. If not, you should provide a correct path (a directory that exists). 
+
+```{r}
+if (dir.exists(file.path(projectPath, "01-R-basics", "data"))) {
+  write.table(
+    x = df.example, 
+    file = file.path(projectPath, "01-R-basics", "data", "df-example.tsv"),
+    sep = "\t"
+  )  
+} else {
+  message("Provide a correct file path!!")
+}
+```
+
+Now, there should be a tsv file in `r file.path(projectPath, "01-R-basics", "data")`. We have used the `"\t"` character as separator, but it could be any other one. 
+
+We can check if the file exists by listing the files. 
+
+```{r}
+list.files(file.path(projectPath, "01-R-basics", "data"))
+```
+
+
+Let's read these data from disk and assign them to a new variable:
+
+```{r}
+if (file.exists(file.path(projectPath, "01-R-basics", "data", "df-example.tsv"))) {
+  df.example.new <- read.table(
+    file = file.path(projectPath, "01-R-basics", "data", "df-example.tsv"),
+    sep = "\t"
+  )  
+} else {
+  message("Provide a correct file path!!")
+}
+```
+
+We can check if both datasets are the same:
+
+```{r}
+df.example %>% head()
+```
+
+
+```{r}
+df.example.new %>% head()
+```
+
+
+## Using the `readr` R package
+
+This is the `tidyverse` version of these functions. `readr`` is supposed to be faster, and offers some additional functionalities In my experience, these functions are a bit faster than the R-base ones, and I find them more intuitive. 
+
+* `read_csv()`
+* `read_tsv()`
+* `read_table()`
+
+Likewise, the packages provides with functions to write to disk as well: 
+
+* `write_csv()`
+* `write_tsv()`
+* `write_delim()`
+
+It contains more functions. Check them when you need to read/write data to disk!
+
+### Exercise: write the equivalent code using this package to load and write the previous data frame
+
+```{r}
+
+```
+
+
+## Using the `data.table` R package
+
+This is the package that provides the fastest way to read rectangular data in R to my knowledge. The purpose of the package is different, though. It offers an alternative to classic data frames much more efficient. I don't usually use it, but in case you are dealing with big amounts of data, it is likely you will have to look for alternatives like this one. 
+
+* `fread()`
+* `fwrite()`
+
+We will use them a couple of times during the course!
+
+### Exercise: do the same with the `data.table` R package
+
+```{r}
+
+```
+
+
+## Saving complex objects to disk
+
+We have been saving rectangular data by writing csv files. However, imagine that I need to save non-rectangular data, such as a list, or even more complex objects such as a Seurat object (we will see what they are). R provides two ways to do so: 
+
+* Rd files: they allow us to save all or specific variables defined in the global environment into a single file, being like a snapshot of your workspace. This may seem very handy at first, but I strongly disrecommend it. When you work with small datasets, it might not be very complex, but it rapidly escalates whenever you load big objects. 
+* RDS files: they allow us to save single objects. From my view, this is the preferred option. 
+
+### RDS files
+
+* Use `readRDS()` to load the saved object, and `saveRDS()` to save them. 
+* The object is not restored with its original name—you assign it a name when you load it.
+* More flexible because it focuses on one object at a time.
+* Suitable for saving objects that are meant to be shared or reused.
+* Good for sharing a single dataset or object across users or systems.
+
+
+```{r, eval = FALSE}
+# Saving with saveRDS
+saveRDS(my_data, "my_data.rds")
+
+# Loading with readRDS
+restored_data <- readRDS("my_data.rds")
+```
+
+#### Rd files
+
+* Use `load()` to restore objects, `save()` to save them. 
+* The objects are restored with their original names (as they were saved).
+* Less portable because it relies on restoring objects with their original names.
+* It’s harder to integrate into other scripts since it brings objects into the global environment.
+
+```{r, eval = FALSE}
+# Saving with save
+save(my_data, my_model, file = "my_workspace.RData")
+
+# Loading with load
+load("my_workspace.RData")
+# Now both `my_data` and `my_model` exist in the environment.
+```
+

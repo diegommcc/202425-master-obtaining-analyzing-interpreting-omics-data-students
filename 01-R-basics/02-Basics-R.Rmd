@@ -1,0 +1,729 @@
+---
+title: "02 - Types of variables, loops, and vectorization"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+```
+
+## Introduction 
+
+Topics to be discussed: 
+
+* Main data types in R: vectors, matrices, data frames, lists, etc.
+* Accessing to objects: indexing and subsetting.
+* Programming basics: conditional expressions, naming variables, defining functions...
+* Loops and vectorization in R: apply-family functions, aggregate, recycling...
+
+
+## Assigning names to objects
+
+As in any other programming language, we can set a name to objects, i.e., we can assign specific information to a variable (see Note below). In R, these variables are called objects, because they are instances of specific classes (likewise in Python). In this subject, I won't talk much about object-oriented programming (OPP), and indeed it is not needed to perfectly know these concepts to use R, but it is important to keep in mind that *everything in R is an object*, and thus belongs to a specific class. 
+
+In R, the assignment is carried out through the `<-` symbol instead of `=`. You can also use `=`, but for historical reasons, R programmers always use `<-`. For example, consider the following code: 
+
+```{r}
+a <- 20
+b <- 30
+c <- a + b
+print(c)
+```
+
+We are assigning numbers of different variables (putting names to different objects), and then adding them up to create another new variable which contains the result. These variables are created in the _workspace_, which is where all the variables created are 'stored'. 
+
+*Note:* We usually refer to this as we can create variables containing specific information, but indeed what happens is that we are putting a name to an object located in a specific place of our computer's memory. 
+
+## Main data structures
+
+In R, there are 5 basic atomic classes that can be further organized in more complex data structures. They are: 
+
+* logical (e.g., `TRUE`, `FALSE`)
+* integer (e.g,, `2L`, `as.integer(3)`)
+* numeric (real or decimal) (e.g, `2`, `2.0`, `pi`)
+* complex (e.g, `1 + 0i`, `1 + 4i`)
+* character (e.g, `"a"`, `"swc"`)
+
+In order to know the class of these objects, we can use the `class()` function: 
+
+```{r}
+paste(
+  ">>> Class of the previous variables:", 
+  paste(class(a), class(b), class(c), sep = ", ")
+)
+```
+
+We can see that the three variables that we have just created are `numeric` objects. Use this function whenever you need to understand what a variable is. 
+
+### Vectors
+
+Vectors are the simplest data structures in R. They store a set of objects of the same kind, which means that they are just repetitions of objects of a specific atomic class. In mathematical terms, they only have 1 dimension. Let's create some vectors using the `c()` function: 
+
+```{r}
+x <- c(0.5, 0.6)       ## numeric
+x <- c(TRUE, FALSE)    ## logical
+x <- c(T, F)           ## logical
+x <- c("a", "b", "c")  ## character
+x <- 9:29              ## integer
+```
+
+There are other functions besides `c()` for creating vectors: 
+
+```{r}
+seq(from = 1, to = 10)
+1:10 ## equivalent
+rep(1, 4)
+rep(1:5, 2)
+```
+
+We can also concatenate vectors:
+
+```{r}
+v1 <- 1:4
+v2 <- 9:6
+(v3 <- c(v1, v2))
+```
+
+And operate with them:
+
+```{r}
+v1 + v2
+```
+
+Many functions operate directly on vectors, so that you don't need to iterate over them to apply a specific function. This is called vectorization, and it is explained below. For instance, imagine that we want to compute the logarithm of a vector of numbers, the `log()` function will do it without the necessity to create a for-loop and iterate over it:
+
+```{r}
+log(v3)
+```
+
+If you need to know how `log()` works, remember to check its Documentation using `?log()`. 
+
+#### Recycling rule
+
+Importantly, when operating with vectors (or other data structures such as matrices) with different length, there is a feature of R important to take into account: the recycling rule. For instance: 
+
+```{r}
+v1 <- 1:3 
+v2 <- 11:12
+v1 + v2
+```
+
+We see that R rises a warning, but still we get a result even though the two objects don't share the same length. This is because the vector with a small length will be repeated as long as the operation completes on the longer vector, i.e., the 3 of `v1` is added up to the 11 of `v2`. Sometimes there are no warning telling us about this phenomenon, so make sure to be doing what you intend to do and check every code line!
+
+#### Logical operations
+
+Like when applying the `log()` function to compute the logarithm of these numbers, we can also perform logical operations. For instance, imagine that we want to know which elements of a vector are greater than a given number: 
+
+```{r}
+v1 <- 1:5
+(v3 <- v1 < 3)
+```
+
+We obtain a logical vector. See some examples below and make sure you understand them: 
+
+```{r}
+v11 <- c(1, 1, 3, 5, 4)
+v1 == v11
+v1 != v11
+!(v1 == v11)
+identical(v1, v11)
+```
+
+```{r}
+v3 <- c(T, F, T, F, T)
+!v3
+```
+
+
+```{r}
+v4 <- c(T, T, T, F, T)
+```
+
+```{r}
+v3 & v4
+v3 | v4
+```
+
+Under the hood, logical variables are encoded as integers: 
+
+```{r}
+0 == FALSE
+1 == TRUE
+```
+
+Therefore, we can use arithmetic operations with logical vectors: 
+
+```{r}
+v1 <- 1:10
+v2 <- 5
+sum(v1 > v2)
+sum(v1 == v2)
+sum(v1 <= v2) / length(v1)
+```
+
+We can also know the position of `TRUE` in a vector by using the `which()` function: 
+
+```{r}
+which(v1 == v2)
+```
+
+
+#### Name of elements in vectors
+
+A vector can be named, which means that each element can have a distinct name. These names are just attributes of the vector object.
+
+```{r}
+v1 <- c("Sol" = 10, "Tierra" = 5, "Luna" = 6)
+v1
+```
+
+We can get the names of a vector using the `names()` function: 
+
+```{r}
+names(v1)
+```
+
+
+#### Indexing and subsetting vectors
+
+There are several ways to access to specific elements of a vector: 
+
+* By specifying the positions we want or we do not want.
+* By using the names of the elements (as long as the vector is named).
+* By using another logical vector. Hopefully this vector should be of the same length, but we have seen that R won't rise an error otherwise, be careful. 
+
+Let's make some examples: 
+
+```{r}
+v1["Tierra"]
+v1[2]
+v1[2:3]
+v1[-1]
+v1[names(v1) == "Luna"]
+```
+
+
+```{r}
+## if you don't know what sample does, check the documentation
+set.seed(123)
+v2 <- sample(1:50, size = 25)
+v2[v2 < 30]           ## values
+which(v2 < 30)        ## positions
+v2[which(v2 < 30)]    ## values
+v2[-which(v2 < 30)]   ## values
+```
+
+We can also modify specific elements of a vector:
+
+```{r}
+v1
+v1["Sol"] <- 100
+v1
+v1[2] <- 40
+v1
+```
+
+### Matrices
+
+They are two-dimensional objects whose elements must be of the same type (likewise vectors, which were one-dimensional). Beyond matrices, it is possible to create arrays of an arbitrary number of dimensions, although it is not very common in R. 
+
+```{r}
+matrix(1:10, ncol = 2)
+matrix(1:10, nrow = 5)
+matrix(1:10, ncol = 2, byrow = TRUE)
+```
+
+We can also combine vector to create matrices with the `cbind()` and `rbind()` functions: 
+
+```{r}
+cbind(1:10, 11:20)
+rbind(rep(c("rr", "ss"), 5), rep(c("jj", "ll"), 5))
+```
+
+Likewise vectors, matrices can be accessed using indexes, logical vectors, and names.
+
+```{r}
+## check paste0 and matrix documentation
+mm <- matrix(
+  1:60, ncol = 5, dimnames = list(paste0("row", 1:12), paste0("col", 1:5))
+)
+mm
+```
+
+Let's now to get access to the matrix in different ways: 
+
+```{r}
+mm["row2", "col2"]
+mm[2, 2]
+mm[rowSums(mm) < mean(rowSums(mm)), ]
+mm[, colMeans(mm) > mean(rowMeans(mm))]
+mm[1:3, 1:3]
+mm[seq(1, 12, 2), ]
+```
+
+
+```{r}
+mm[seq(1, 12, 2), seq(1, 5, 2)] <- 0
+mm
+```
+
+You can also perform operations on matrices with some functions: 
+
+```{r}
+rowSums(mm)
+colSums(mm)
+mean(mm)
+median(mm)
+sum(mm)
+```
+
+And also use matrix operations: 
+
+```{r}
+mm1 <- matrix(1:4, ncol = 2)
+mm2 <- matrix(11:14, nrow = 2)
+mm1 %*% mm2
+mm1 + mm2
+mm1 * mm2
+mm1 / mm2
+```
+
+#### Dropping dimensions
+
+Compare the class of the following objects: 
+
+```{r}
+mm[1, ]
+mm[1, , drop = FALSE]
+```
+
+Could you tell me what's the difference? What is the shape of each object? Use the `dim()` function to check it out. 
+
+### Factors
+
+Factors are a special type of character vectors that represent categorical data. Like data frames (see below), these objects are very handy for statistical data. They can be ordered and unordered, and are important for many statistical functions, such as `lm()`, `aov()`, or `glm()`. 
+
+Imagine that we are recording the answer of some participants to a question, and this answer can only be yes or no. Instead of using a regular character vector, we want to force the variable to only take these two possible values. In addition, we don't actually care much if the answers are encoded as `yes` or `no` strings, they could be `1` and `0`, what it is relevant here is the fact that the answers are different and only can be one of the two options. This is exactly what factors are meant to: they encode categorical variables. The use of factors will ensure to always obtain the same results when using statistical packages, for instance. 
+
+Let's put an example: 
+
+```{r}
+answer.type.1 <- factor(c("yes", "no", "no", "yes", "yes"), levels = c("yes", "no"))
+answer.type.2 <- factor(c("pos", "neg", "neg", "pos", "pos"), levels = c("pos", "neg"))
+answer.type.3 <- factor(c(1, 0, 0, 1, 1), levels = c(1, 0))
+```
+
+```{r}
+answer.type.1
+answer.type.2
+answer.type.3
+```
+
+These three variables are enconding the same information, even though `answer.type.3` is comprised of numbers. If I hadn't used a factor, the vector would be numeric, and it would be treated like that if I had used it in a statistical function. We know that treating these answers as continuous variables does not make any sense, and that's why we force them to be factors. 
+
+Don't worry if know they sound strange to you, we will see how to use them throughout the course. 
+
+### Lists
+
+Lists are containers able to store any combination of different types of objects. They are not forced to have a rectangular shape, and can contain elements with different lengths, dimensions, etc. 
+
+```{r}
+ll1 <- list(
+  a = 1:5, 
+  b = letters[1:15]
+)
+ll1
+```
+
+They can even contain other lists: 
+
+```{r}
+ll2 <- list(
+  a2 = seq(1, 100, 3), 
+  b2 = LETTERS[seq(1, 26, 2)],
+  c2 = matrix(1:20, ncol = 2),
+  d2 = ll1
+)
+ll2
+```
+
+They can be accessed in different ways as well: 
+
+```{r}
+## if named
+ll2[["c2"]]
+ll2[[1]]
+ll2[1:3]
+```
+
+Now, check the differences between the following two commands. Could you tell me what is going on? Hint: use the `class()` function.
+
+```{r}
+ll2[1]
+ll2[[1]]
+```
+
+Named list have also a special way to be accessed through the `$` operator: 
+
+```{r}
+ll2$a2
+ll2$d2$b
+ll2$c2[1, 2]
+```
+
+We can add new elements to the list as follows: 
+
+```{r}
+ll2[["New"]] <- 5
+ll2$New2 <- LETTERS[1:10]
+ll2[seq(length(ll2) - 3, length(ll2))]
+```
+
+
+### Data frames
+
+Data frames are very important in R, since they represent how statistical data is represented most of the time. They are rectangular objects (like a matrix) in which each column can be of a different type. This makes them very flexible and suitable for many cases, e.g., a two column table with age (continuous variable) and gender (categorical variable). Each column can be different because under the hood data frames are lists of vectors with the same length. Let's put some examples: 
+
+```{r}
+df1 <- data.frame(
+  ID = paste0("ID", 1:50),
+  Age = sample(18:70, size = 50),
+  Sex = factor(sample(c("F", "M"), size = 50, replace = T)), 
+  Height = sample(150:190, size = 50, replace = T),
+  row.names = paste0("ID", 1:50)
+)
+df1
+```
+
+As a data frame is just a list of vectors with the same length, we can access it in the same way as a list: 
+
+```{r}
+df1$ID
+mean(df1$Age)
+mean(df1[["Age"]])
+```
+
+Like lists, you can use the `[[` operators and see how the type of objects returned is different: 
+
+```{r}
+df1[["Sex"]]
+df1["Sex"]
+```
+
+Thanks to their rectangular structure, they can also be accessed as a matrix: 
+
+```{r}
+df1[1:5, 3]
+df1["ID5", "Height"]
+df1["ID1", 2]
+df1["ID2", ]
+df1[, 4]
+```
+
+Again, compare the output of the two following commands and explore the class the objects belong to: 
+
+```{r}
+c1 <- df1[1, ]
+c2 <- df1[, 1]
+class(c1)
+class(c2)
+```
+
+If you think about it, it makes sense `c1` is a data frame, it couldn't be a vector as they have to be of the same type. On the other hand, `c2` is just the vector contained in the first list/column of the data frame, since columns contain always the same type of objects. 
+
+We can transform data frames into matrices in two different ways, but data will be transformed so that all columns share the same type:
+
+```{r}
+head(data.matrix(df1))
+head(as.matrix(df1))
+```
+
+Many functions that work with matrices also do it with data frames: 
+
+```{r}
+df2 <- cbind(df1, R = LETTERS[sample(1:26, size = 50, replace = T)])
+head(df2)
+```
+
+We can also create new columns in the same way we add new elements to a list: 
+
+```{r}
+df2[["New"]] <- 1 ## why does it work? 
+df2$New2 <- rep(c("X", "Y"), 25)
+head(df2)
+```
+
+
+## Programming basics
+
+Just some examples on how to do some basic things in R: 
+
+### Conditional expressions
+
+```{r}
+n <- 20
+if (n < 19) {
+  print("Only 20 is accepted!")
+} else if (n > 20) {
+  print("More than 20 is not accepted...")
+} else {
+  print("It is 20! Great!")
+}
+```
+
+There is a handy function called `ifelse` useful for some cases as it is vectorized:
+
+```{r}
+data.frame(
+  Numbers = 1:10,
+  Condition = ifelse(1:10 < 5, "less than 10", "greater than or equal to 10")
+)
+```
+
+### Creating functions
+
+```{r}
+ff1 <- function(x, n = 18) {
+  if (n > x) {
+    print(paste0("Only ", n, " is accepted!"))
+  } else if (n < x) {
+    print(paste0(x, " is more than ", n, "... Not accepted"))
+  } else {
+    print(paste0(x, " is ", n, "! Great!"))
+  }
+}
+ff1(x = 12)
+ff1(x = 18)
+ff1(x = 20)
+```
+
+Functions can also be created using a simpler syntax (useful for anonymous or lambda functions):
+
+```{r}
+ff2 <- \(x, y = 2) x + y
+ff2(2, 5)
+```
+
+
+### Scoping
+
+Scoping is the set of rules that tells R where to find a defined variable. When we create new variables in our R session, they are defined in the global environment, which is available in the top-right panel in RStudio and also through the `ls()` function. 
+
+```{r}
+x <- 10
+ls()
+```
+
+Among the elements returned in the vector, you should find `x`. We can use the `rm()` function to remove variables from the global environment, although they might not be removed from memory (this is a bit complicated and not relevant now, so don't worry).
+
+```{r}
+## this will clean up our global environment
+rm(list = ls())
+```
+
+Now imagine that we create variables inside functions: where are these variables defined? Are they available from out of the function? Imagine the following situation: 
+
+```{r}
+f <- function() {
+  x <- 10
+  y <- 5
+  c(x, y)
+}
+f()
+```
+
+We are defining `x` and `y` inside the `f` function. However, they are not defined in the global environment, because their scope is the function, they don't go to an upper level. 
+
+```{r}
+ls()
+```
+
+Now, check this code: 
+
+```{r}
+x <- 2
+g <- function() {
+  y <- 1
+  c(x, y)
+}
+g()
+```
+
+We are defining `x` outside the function, and hence it can be found in the global environment. However, the `g()` function is still able to return `c(x, y)` even though `x` is in a superior scope of `g()`. This is because if a name isn’t defined inside a function, R will look one level up. This applies also when creating functions inside functions (something also very common): 
+
+```{r}
+x <- 1
+h <- function() {
+  y <- 2
+  i <- function() {
+    z <- 3
+    c(x, y, z)
+  }
+  i()
+}
+h()
+```
+
+These rules are important, because sometimes it might happen that your write a function that gives an unexpected result just because it is taking the wrong variable (see below)... Be careful with this!
+
+```{r}
+f <- function() x
+x <- 15
+f()
+x <- 20
+f()
+```
+
+### Namespaces
+
+The same set of rules explained above apply also to functions. Indeed, this gets specially important when working with several R packages at the same time. It is relatively common to load packages that share the same name for different functions (which will do different things), or even we could create a function with the same name of another one from a loaded R package. How does R deal with these situations? You can use the `search()` function to see the order of scopes (or namespaces) taken into account in these situations: 
+
+```{r}
+search()
+```
+
+These are the packages loaded in this R session. If you need to use a determined function from a package, the solution is to use the `::` operator we talked about before:
+
+```{r, eval = FALSE}
+stats::filter
+dplyr::filter
+```
+
+## Loops and vectorization in R
+
+Just like Python, you can write for-loops: 
+
+```{r}
+for (i in 1:5) {
+  print(i)
+}
+```
+
+and while-loops: 
+
+```{r}
+i <- 1
+while (i <= 5) {
+  print(i)
+  i <- i + 1
+}
+```
+
+However, even though you can use them to solve some problems, R was designed to avoid them. This is because vectorization is preferred over for-loops, since most of the R functions are already designed to be vectorized. This leads to a shorter and clearer code, as well as the code will run faster in many cases. 
+
+```{r}
+vec <- 1:10
+for (i in vec) {
+  print(sqrt(i))
+}
+```
+
+This will work, but instead you should use: 
+
+```{r}
+sqrt(vec)
+```
+
+
+### `apply`-family functions
+
+`apply`-like functions are the equivalent to for-loops in R. Their use is related to functional programming, the paradigm R was designed under. They can be thought as homologous to the `map()` function in Python, as they are intended to apply the same function to each entry in a vector, matrix, data frame, or list. 
+
+To understand how these functions work, let's see some examples and read the documentation: 
+
+```{r}
+(mm <- matrix(c(1, 56, 40, 60, 45, 100), ncol = 2))
+```
+
+```{r}
+apply(mm, 1, mean)
+apply(mm, 2, mean)
+apply(mm, 1, min)
+```
+
+You can also implement your own function to be applied to each element. These functions are called anonymous functions because they are not associated with a name, they are dynamically created at the moment they are called: 
+
+```{r}
+apply(mm, 1, \(x) mean(x) + sqrt(x))
+apply(mm, 1, function(x) min(x) / length(x))
+```
+
+Please, check also the documentation of `lapply()`, `sapply()`, `tapply()` and `mapply()`.
+
+## `aggregate()` AND `by()`
+
+To be honest, I use the `tydiverse` versions of these functions most of the time, but I think it is important for you to know them. Imagine the following data frame: 
+```{r}
+(df <- data.frame(
+  age = c(12, 13, 16, 25, 28, 54, 67), 
+  sex = factor(c("male", "female", "female", "male", "male", "female", "male")))
+)
+```
+
+We need to compute the mean age per sex. `aggregate()` allows us to do it very easily: 
+
+```{r}
+aggregate(df$age, list(df$sex), mean)
+aggregate(df$age, list(Gender = df$sex), mean)
+aggregate(df$age, df["sex"], mean)
+```
+
+We can also do the same with the `by()` function, but it will return more than 1 value per group using a list. Check the code: 
+
+```{r}
+by(df$age, df["sex"], \(x) c(mean(x), sd(x)))
+```
+
+It is possible to use a formula interface, a way to encode information very handy in R (you will see some examples in the future):
+
+```{r}
+aggregate(age ~ sex, data = df, \(x) mean(x))
+```
+
+It is possible to compute the mean of several variables according to a categorical variable at the same time:
+
+```{r}
+df$Y <- 1:7
+```
+
+```{r}
+aggregate(cbind(age, Y) ~ sex, data = df, \(x) sd(x))
+```
+
+```{r}
+aggregate(df[, c("age", "Y")], list(Sex = df$sex), \(x) sd(x))
+```
+
+```{r}
+with(df, aggregate(age ~ sex, FUN = \(x) sd(x)))
+```
+
+You could also obtain the same results using another function called `split()`. Could you explain to me what is happening in the code below? 
+
+```{r}
+lapply(with(df, split(df, sex)), function(y) sd(y$age))
+```
+
+This kind of operations are very common when analyzing data. Very often you will ask your-selves how the mean of a determined variable grouped according to some categories is. For that reason, R implements several ways to obtain the same. Indeed, these are the R-base versions, but there are many other packages intended to do the same but in a handier way. Check this post if you are interested: <https://www.magesblog.com/post/2012-01-28-say-it-in-r-with-by-apply-and-friends/>. 
+
+One of the most used R packages to do this kind of operations is `dplyr` from the `tidyverse` philosophy. We will talk about some important functions on the following days. 
+
+

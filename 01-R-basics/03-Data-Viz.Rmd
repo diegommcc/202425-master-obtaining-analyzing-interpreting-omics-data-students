@@ -1,0 +1,359 @@
+---
+title: "03 - Data visualization"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+```
+
+
+## Introduction 
+
+Data visualization is a critical step in the data analysis process, since this is the step that allow us to go from raw data to interpretable insights. It is not only important for communication purposes, where an effective chart is invaluable for conveying complex ideas (e.g., papers, presentations...), but also for us as analysts. Visualization helps analysts explore their data more intuitively, identify biases, and uncover hidden patterns or outliers that might otherwise be unnoticed. In bioinformatics and omics data analysis, where datasets are often vast and complex, this step is absolutely essential.
+
+Data visualization is probably one of the main strengths of R. It offers two main ways to make plots: 
+
+* R-base, which are its pre-built functions. 
+* `ggplot2`, the most popular R package with data analysts because of its flexibility. 
+
+I will introduce both of them, but it will be your choice when to use them. 
+
+## Plotting using R-base
+
+R-base (without the installation of any other R package) can produce a variate of plots. Here, only some of them will explained, plotting in general is an art that can be only mastered through practice, so keep it up!
+
+```{r}
+x <- 1:10
+y <- 2 * x 
+plot(
+  x, y, xlab = "This is the label for the x axis",
+  ylab = "Label for the y axis",
+  main = "Random plot", 
+  col = "darkred", cex = 1.5
+) 
+abline(h = 5, lty = 2, col = "darkblue")
+abline(v = 6.5, lty = 1, col = "gold")
+```
+
+You can change the color and shape of points using the `col` and `pch` arguments, respectively. 
+
+```{r}
+## it creates an empty canvas where other plot variables can draw
+plot(c(1, 21), c(1, 2.3), type = "n", axes = FALSE, ann = FALSE)
+## points by color (col)
+points(1:20, rep(2, 20), pch = 16, col = rainbow(20)) 
+text(11, 2.2, "col", cex = 1.3)
+## points by shape (pch)
+points(1:20, rep(1, 20), pch = 1:20) 
+text(1:20, 1.2, labels = 1:20) 
+text(11, 1.5, "pch", cex = 1.3)
+```
+
+To understand the parameters, what you need to modify if you want to change anything of the plot, etc, please, read `?plot()`. This is the only way. Let's put some examples that may serve you as a guide.
+
+### Scatter plots
+
+```{r}
+set.seed(123)
+df.data <- data.frame(
+  X = rnorm(1000, mean = 1000, sd = 10),
+  Y = rpois(100, n = 1000),
+  Category.1 = factor(sample(LETTERS[1:3], size = 1000, replace = T)),
+  Z = rnorm(1000, mean = 12, sd = 6)
+)
+```
+
+```{r}
+with(df.data, plot(Y ~ X, col = "darkgreen"))
+plot(df.data$X, df.data$Z, col = "darkgreen")
+```
+
+
+```{r}
+plot(df.data$X, df.data$Y, col = df.data$Category.1)
+## why the line of code below works?? Try to understand it
+plot(df.data$X, df.data$Y, col = c("blue", "gray", "red")[df.data$Category.1])
+```
+
+```{r}
+plot(
+  df.data$X, 
+  df.data$Y, 
+  col = c("blue", "gray", "red")[df.data$Category.1], pch = 19  
+)
+
+# Add a legend
+legend(
+  "topleft", 
+  legend = levels(df.data$Category.1), 
+  col = c("blue", "gray", "red")[factor(levels(df.data$Category.1))],
+  pch = 19
+)
+```
+
+
+### Histograms
+
+```{r}
+hist(df.data$Y, breaks = 25, col = "pink")
+hist(df.data$X, breaks = 50, col = "lightblue")
+```
+
+We can also make several plots in different panels using the `par()` function: 
+
+```{r, fig.height=5, fig.width=12}
+par(mfrow = c(1, 2))
+hist(df.data$Y, breaks = 25, col = "pink")
+hist(df.data$X, breaks = 50, col = "lightblue")
+dev.off()
+```
+
+### Boxplots
+
+```{r}
+boxplot(Y ~ Category.1, df.data, col = c("blue", "gray", "red"), main = "Bolxplot")
+with(
+  df.data, 
+  boxplot(Z ~ Category.1, col = c("blue", "gray", "red"), frame = FALSE)
+)
+stripchart(
+  X ~ Category.1, df.data, vertical = TRUE, pch = 17, 
+  col = c("blue", "gray", "red")
+)
+```
+
+
+### Barplots
+
+```{r}
+barplot(
+  head(df.data$X, 10), names.arg = paste0("Sample-", c(1:10)), 
+  las = 2,
+  col = c("blue", "gray", "red")[head(df.data$Category.1, 10)],
+  main = "Barplot of first 10 samples"
+)
+abline(h = 0)
+```
+
+
+There are many more options to make plots, make them more appealing, etc. If you're keen on learning more about R-base plots, I recommend this chapter focused on it: <https://intro2r.com/simple-base-r-plots.html>. 
+
+
+## Plotting using `ggplot2`
+
+`ggplot2` is an R package meant to generate high quality plots. It works a bit different from R-base, and it is the preferred option for many users. From my view, once you understand the philosophy behind it, it is quite intuitive and flexible, allowing to create very complex plots just by adding layers. 
+
+`ggplot2` is that intuitive thanks to using a grammar of graphics: it follows a set of rules that, if correctly applied, allow a user to build complex plots very easily. One of the main differences between `ggplot2` ad R-base is that the former is only designed to work on tables in tidy format. From my view, it is great! But it forces users to convert data into it. We haven't talked about this way of organizing data, so this chapter will serve as an introduction. 
+
+### Components of a ggplot object
+
+Any `ggplot2` plot is comprised of three main components: 
+
+* Data to be represented.
+* Geometry, which is the shape of our plot, i.e., the type of plot we are going to make, such as scatterplots, boxplots, histograms, densities, etc. 
+* Aesthetic mapping, which are the elements where we map our data. It refers to the X- and Y-axes, colors, labels, etc. 
+
+The general way to make plots with `ggplot2` is to construct it part by part by adding layers to an initial ggplot object that contains the data. These layers will define geometries, compute summary statistics, change scales, define colors, etc. 
+
+We are going to use a classic dataset usually used for teaching: the Iris dataset. It comprises measurements of iris flowers from three different species: _Setosa_, _Versicolor_, and _Virginica_. Each sample consists of four features: sepal length, sepal width, petal length, and petal width. Additionally, each sample is labeled with its corresponding species
+
+```{r}
+library("ggplot2")
+library("datasets")
+data(iris)
+```
+
+```{r}
+str(iris)
+```
+
+We have 150 samples (rows) defined by 5 variables: 4 continuous variables and 1 categorical variable (species). Let's use it to illustrate some plots that can be made using `ggplot2`.
+
+### Structure of ggplot
+
+Plotting using `ggplot2` always follows the same structure: 
+
+1. The `ggplot()` function creates an object. It receives a data frame with the data to be represented, and a list of aesthetic mappings to use for plot. It is in the latter where we set the variables that will be plotted. This object is created using the `aes()` function. In this step, the canvas + the field where data will be mapped are created. 
+
+```{r}
+## canvas, just a ggplot object
+ggplot()
+```
+
+```{r}
+## canvas + the field where variables will be mapped. In this case, we take 
+# Sepal.Length and Sepal.Width columns from the iris data frame
+ggplot(iris, aes(x = Sepal.Length, y = Sepal.Width))
+```
+
+2. now, we need to add a geometry, which is the way that `ggplot2` displays information or how the data are going to be mapped in the field we just created. Let's make a simple scatter plot using `geom_point()`. To add geometries, we use the `+` operator. 
+
+```{r}
+## canvas + the field where variables will be mapped
+ggplot(data = iris, mapping = aes(x = Sepal.Length, y = Sepal.Width)) + 
+  geom_point()
+```
+
+3. From here, everything is optional. Data, mapping and geometry are the three basic pieces that we need to create a new plot, but we can add extra layers such as new geometries, changes in the aesthetics, represent statistical information, etc.
+
+Let's make some examples changing colors, including new geometries, etc.
+
+### Scatter plots
+
+We can color points according to different variables and modify some specific parts of the plot using the `theme()` function, whose objective is to modify the aesthetics of the plot. 
+
+```{r}
+ggplot(
+  data = iris, 
+  mapping = aes(x = Sepal.Length, y = Sepal.Width, color = Species)
+) + geom_point() + ggtitle("ggtitle() for the title, theme() for the aspect") + 
+  theme(plot.title = element_text(face = "bold", color = "red"))
+```
+
+We can add additional geometries: 
+
+```{r}
+ggplot(
+  data = iris, 
+  mapping = aes(x = Sepal.Length, y = Sepal.Width)
+) + 
+  geom_point(color = "darkgreen") + 
+  geom_smooth(method = 'lm', color = "lightgreen") + 
+  ggtitle("Check ?geom_smooth()") + 
+  theme(plot.title = element_text(face = "bold"))
+```
+
+If we group our samples according to the species they belong to, `geom_smooth()` will also be grouped. 
+
+```{r}
+ggplot(
+  data = iris, 
+  mapping = aes(x = Sepal.Length, y = Sepal.Width, color = Species)
+) + geom_point() + geom_smooth(method = 'lm') + 
+  ggtitle("Check ?geom_smooth()!!") + 
+  theme(plot.title = element_text(face = "bold"))
+```
+
+By using the `facet_wrap()` function, we can split our data into different panels:
+
+```{r, fig.height=4, fig.width=12}
+## canvas + the field where variables will be mapped
+ggplot(data = iris, mapping = aes(x = Sepal.Length, y = Sepal.Width, color = Species)) + 
+  geom_point() + geom_smooth(method = 'lm') + facet_wrap(~ Species) + 
+  ggtitle("Using factet_wrap()") + 
+  theme(plot.title = element_text(face = "bold"))
+```
+
+Importantly, not only `ggplot()` is able to receive mappings. We can include an additional mapping to each geometry. This is specially important when making complex and multi-layered plots. Otherwise, for most of the situations, including the additional variables in `ggplot()` will be enough. 
+
+For instance, in the following plot we want our points to be black, but the regression lines to have different colors. Hence, we need to set the color in `geom_smooth()` and not in `ggplot()`, since this would apply to the whole plot. 
+
+```{r}
+ggplot(
+  data = iris, 
+  mapping = aes(x = Sepal.Length, y = Sepal.Width)
+) + geom_point() + geom_smooth(aes(color = Species), method = 'lm') + 
+  ggtitle("Only coloring lm lines") + 
+  theme(plot.title = element_text(face = "bold"))
+```
+
+We can also color the points using a continuous variable and change the shape of the points:
+
+```{r}
+ggplot(
+  data = iris, 
+  mapping = aes(
+    x = Sepal.Length, y = Sepal.Width, color = Petal.Length, shape = Species
+  )
+) + geom_point(size = 2.5) + xlab("Speal length") + ylab("Speal width")
+```
+
+The greatest part of `ggplot2` is that all these rules apply in the same way for any kind of plot we want to make. 
+
+### Histograms
+
+```{r}
+ggplot(data = iris, mapping = aes(x = Petal.Length)) + 
+  geom_histogram() + 
+  ggtitle("Histogram of Petal length") + 
+  theme(plot.title = element_text(face = "bold")) 
+```
+
+The `alpha` parameter allows us to change the transparency of the colors:
+
+```{r}
+ggplot(data = iris, mapping = aes(x = Petal.Length, fill = Species)) + 
+  geom_histogram(alpha = 0.8) + 
+  ggtitle("Histogram of petal length") + 
+  theme(plot.title = element_text(face = "bold")) 
+```
+
+We can also define our own colors: 
+
+```{r}
+ggplot(data = iris, mapping = aes(x = Petal.Length, fill = Species)) + 
+  geom_histogram(alpha = 0.8) + 
+  ggtitle("Histogram of petal length") +
+  scale_fill_manual(values = c("gold", "lightblue", "orange")) + 
+  theme(plot.title = element_text(face = "bold")) 
+```
+
+Instead of a histogram, we can create a density plot (both convey the same information), and change the theme used to make the plot:
+
+```{r}
+ggplot(data = iris, mapping = aes(x = Petal.Length, fill = Species)) + 
+  geom_density(alpha = 0.8) + 
+  ggtitle("Histogram of petal length") +
+  labs(y = "Density", x = "Petal length", fill = "Species under study") +
+  scale_fill_manual(values = c("gold", "lightblue", "orange")) + 
+  theme_classic() + theme(plot.title = element_text(face = "bold")) 
+```
+
+`theme_classic()` is just one of the multiple available themes.
+
+### Boxplots
+
+```{r}
+ggplot(data = iris, mapping = aes(x = Species, y = Petal.Width, fill = Species)) + 
+  geom_boxplot(alpha = 0.8) + 
+  ggtitle("Boxplot of petal width") +
+  labs(y = "Petal width", x = "Species under study", fill = "Species") +
+  scale_fill_manual(values = c("gold", "lightblue", "orange")) + 
+  geom_hline(yintercept = 1, color = "red", linetype = "dashed") + 
+  theme_classic() + theme(plot.title = element_text(face = "bold")) 
+```
+
+### And more
+
+There are many more geometries that can be used to plot your data. If you have an idea about how to represent a determined dataset, just check on the Internet. Also, you can explore the following links where you'll find more examples: 
+
+* <https://intro2r.com/bestiary.html>
+* <https://rafalab.dfci.harvard.edu/dsbook-part-1/dataviz/dataviz-in-practice.html>
+
+
+<!-- ## Heatmaps using `ComplexHeatmap` -->
+
+<!-- In omics data, it is very typical to represent data using heatmaps. I am putting them in a different chapter because they are pretty common and we will use a special R package to make them: `ComplexHeatmap`. I like the package because it is quite flexible, but there are many more options to make heatmaps: the `pheatmap` R package, the `heatmap()` function from R-base, or `ggplot2` itself. If you find any other package more intuitive, go ahead! This is just a recommendation.  -->
+
+
+
+

@@ -1,0 +1,211 @@
+---
+title: "01 - Introduction to R"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+```
+
+## Introduction
+
+Brief introduction to R as a programming language. 
+
+Topics to be discussed:
+
+* R and Rstudio installation. 
+* Installing packages: CRAN and Bioconductor. 
+* The R console for interactive calculations. 
+* Scripting and non-interactive runs.
+* Documentation in R.
+* Bonus: working with projects in Rstudio. 
+
+## R and RStudio installation
+
+### Installing R
+
+First, you need to install R in your computer. These instructions assume that you have a Linux computer (specifically, Ubuntu). If not, check the corresponding installing instructions in CRAN and ask me. 
+
+Instructions: 
+
+Go to CRAN and follow the instructions: <https://cran.r-project.org/bin/linux/ubuntu/fullREADME.html>. You can also check link: <https://gcore.com/learning/how-to-install-r-on-ubuntu/>. Briefly: 
+
+1. Update system packages: open a terminal and update the package index by running:
+
+```{bash, eval = FALSE}
+sudo apt update
+sudo apt upgrade
+```
+
+2. Add the CRAN repository for R: R's packages are maintained in the CRAN repository. Add the appropriate repository for your Linux distribution:
+
+```{bash, eval = FALSE}
+sudo apt install -y software-properties-common
+sudo add-apt-repository -y "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/"
+```
+
+3. Add the CRAN public key to your system (check which version of R and Ubuntu you have and adapt the command according to it):
+
+```{bash, eval = FALSE}
+sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 51716619E084DAB9
+```
+
+4. Install R: once the repository is added, install R using:
+
+```{bash, eval = FALSE}
+sudo apt update
+sudo apt install -y r-base
+```
+
+5. Verify installation: Check if R is installed successfully:
+
+```{bash, eval = FALSE}
+R --version
+```
+
+### Installing Rstudio 
+
+Rstudio is an Integrated Development Environment (IDE) intended to work with R. You can use alternative IDEs such as Visual Studio Code or IntelliJ. However, at least at the beginning, I strongly recommend using Rstudio as it is intuitive and useful for data science. 
+
+1. Download the Rstudio Package: go to the Rstudio download page (<https://posit.co/download/rstudio-desktop/>) and find the .deb file for your system. 
+
+2. Install the software from the .deb file: 
+
+```{bash, eval = FALSE}
+sudo dpkg -i rstudio-XXX-amd64.deb
+```
+
+3. Verify installation: Launch Rstudio by typing:
+
+```{bash, eval = FALSE}
+rstudio
+```
+
+
+## Installing R packages
+
+R is not only what you have just installed. This is just base R, the bricks to build bigger things. Like Python, R allows to install software packages, which are a set of functions, classes and, in general, code intended to do a specific task. These packages are available via different sources, but the most important ones are [CRAN](https://cran.r-project.org/) and [BioConductor](https://www.bioconductor.org/), being the latter specific to computational biology. 
+
+For instance, during this course we will need to install packages specific to doing particular tasks, such as analyzing single-cell RNA-seq data. This means that we won't need to re-implement the wheel every time we need to do a new thing if there is someone who already faced that particular problem. R packages are created by people for people, which means that they are open-source, so that you can explore the original code. While this openness means that errors might exist, it also enables anyone to identify and report those errors, contributing to the continuous improvement of the software. This collaborative process makes open-source software a living entity, constantly evolving and adapting through community effort. 
+
+To install packages from CRAN, the code is as follows: 
+
+```{r, eval = FALSE}
+install.packages('ggplot2')
+```
+
+Then, in order to make the classes and functions the package contains available in your R session, you need to load it in your R session (similar to `import` in Python). It would be as follows: 
+
+```{r, eval = FALSE}
+library('ggplot2')
+```
+
+On the other hand, if an R package is in BioConductor, you first need to install the BioConductor installer R package and then call its `install()` function as follows: 
+
+```{r, eval = FALSE}
+## if not already installed
+install.packages('BiocManager')
+BiocManager::install('limma')
+```
+
+If you don't know what the `::` structure is, this is just a way to call a function from an installed package without needing to load the entire package. It is very uncommon, but if you see `:::`, the reasoning is the same, but the function being used is non-exported, which means that it wasn't meant to be used by a user but internally in the package. 
+
+## The R console for interactive calculations
+
+Thanks to the interactive nature of R (as any other interpreted programming language), the R console can be thought as a very 'big' calculator that can serve to ask questions and get an answer. Regardless how you interact with R, whenever there is an active R session, there will be a console where your commands will be executed. In Rstudio, this console is integrated, but you can also access to it by typing R in your Linux terminal (like Python). The console is just the R interpreter, and it constitutes one of the advantages of interpreted programming languages for data science. Analyzing data is something highly interactive (not like developing web pages or coding for other purposes), reason why interpreted languages are that successful in Bioinformatics and Data Science. 
+
+For instance, imagine that I have a vector of numbers already computed in my R session. Now, I want to get a general sense of what my data look like. As R is a language programming made by and for statistician, it already provides the `summary()` function (without importing functions from any package) that gives us some descriptive statistics. Type the following code in your terminal:
+
+```{r, eval = FALSE}
+vec.data <- c(8, 4, 43, 6.5, 7, 10, 3)
+summary(vec.data)
+```
+
+This is just a silly example, but I want you to realize how useful it is to have the possibility to ask questions about your data and obtain a quick response. 
+
+## Scripting and non-interactive runs
+
+Imagine that we are analyzing a dataset. You could do it just by running commands on the console in an interactive way as explained above. However, this has several disadvantages: 
+
+* You are not tracking what you are doing in the analysis, or at least not in a tidy and clean manner. 
+* Once you close your R session, the code you just typed will disappear. 
+
+The former point is also shared with point-and-click analysis software (such as Excel or web-based software for specific purposes). Although they may be handy in some situations, the fact that there is no record of the analysis makes them not reproducible and highly prone to mistakes. These are features that we don't want in our analyses if we want to do open and reproducible science. 
+
+Programming languages have the advantage that we can save our code as scripts, so that we can always go back to them, check what we did, see if there are any errors, share them with others to reproduce our analyses, etc. Therefore, in science writing and saving scripts should be the way we use R (or any other programming language). 
+
+In addition, scripts allow us to carry out non-interactive computations. For instance, if you have a set of functions that work always the same on specific data, you can transform them into a script callable from the Linux terminal, so that you don't need to copy/paste the code every time you need to do that analysis. In R, the non-interactive way to call scripts is through the `Rscript` command as follows:
+
+```{bash, eval = FALSE}
+Rscript /path/to/my/script/my-script.R
+```
+
+There are specific R packages to make R scripts able to receive parameters, like in Python or bash. 
+
+### Scripts and Rmarkdowns
+
+Besides scripts, R offers a different way to store your code. RMarkdowns are to R what the Jupyter notebooks are to Python, but better from my view. They are just plain test, not a huge JSON with several internal variables that change every time you open a file. A priori this is not important, but if you work with versions (Git and GitHub), working with Jupyter Notebooks can be a bit painful sometimes. 
+
+My recommendations regarding how to store your code in R are: 
+
+* When you are analyzing data, I believe Rmarkdown is the best option: it allows you to take notes using [Markdown](https://www.markdownguide.org/), the plots (and any kind of output) appear inline, which is extremely useful during data analysis. In addition, RMarkdown files can easily be converted into readable reports by rendering them into PDF or HTML formats. We won’t spend much time on this, but if you have any questions, feel free to reach out to me.
+* If you have a set of functions for a specific purpose, you don't need to re-implement them every time you create an Rmarkdown for an analysis. You can just write a script with functions that can be loaded into the Rmarkdown's R session. We will see some examples about this. 
+* If you have a workflow that does not need an interactive exploration of the data, and believe that you could make it automatic since 'it does always the same', then write a robust script that can be called from your terminal using `Rscript`. 
+* Finally, if you have written a set of functions for a specific purpose, and think that they are robust enough to be used in several situations, maybe you can think of implementing an R package. This will allow you to write a nice documentation to help others understand and use your code effectively, and aiding your future self when you revisit your work in the future. This takes time and indeed we won't talk about it, but if you are curious, again just talk to me! 
+
+
+## Documentation in R
+
+Regardless if it comes from R-base or an R package from BioConductor, any function contains a documentation that allows the user to understand what it does and what parameters it receives. This help can be accessed from the console itself by using the following code: 
+
+```{r}
+## both give the same result
+help(mean)
+?mean 
+```
+
+Also, you can just google the function and explore the same documentation or specific uses of the function in tutorials. Do it in the way you prefer, but always read the documentation before using any function! 
+
+## Bonus: working with porjects in RStudio 
+
+Data analysis is not just about extracting insights from data—it’s about doing so in a way that is clean, organized, and reproducible. A disorganized analysis can lead to lost time, errors, and results that are difficult for others (or even your future self) to replicate. To address this, adopting a structured approach to organizing your projects is essential.
+
+To do so, it is important to follow the same general directory structure for all your projects, so that you can avoid these issues. This approach brings clarity, ensures reproducibility, and makes collaboration easier. For instance, this is the structure that I usually follow: 
+
+```{bash, eval = FALSE}
+project_name/
+├── data/          # Raw data files
+├── metadata/      # Descriptions of data (additional information of each sample)
+├── objects/       # Processed data to be saved for future analyses
+├── src/           # Scripts for analysis (functions useful for notebooks)
+├── notebooks/     # Jupyter or RMarkdown notebooks for exploratory analysis
+├── reports/       # Outputs like plots, tables, or reports
+├── README.md      # Overview of the project
+└── .git/          # Version control (if using Git)
+```
+
+
+If you use Rstudio, I think there is a great way to make your projects usable and portable regardless their location in your computer. It is by using R projects, the option that you can see on the top-right corner of RStudio. An R project is essentially a self-contained environment for your analysis. It ties all your work (scripts, data, etc.) to a specific directory by keeping your workspace isolated. When you open an R Project, the working directory (where the R interpreter thinks it is) is automatically set to the root of the project, there is no need to manually set paths using `setwd("/path/to/project")`, which is a common source of bugs.
+
+Now, as your project directory has a defined structure, you can set variables that contain the path to your data, the output, etc. We will see examples throughout the course. 
+
+
