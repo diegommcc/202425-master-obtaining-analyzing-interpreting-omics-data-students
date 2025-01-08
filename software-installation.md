@@ -6,6 +6,15 @@ The details to install R and RStudio can be found at 01-R-basics/01-Intro-R.Rmd
 
 In addition, the R packages needed during the course can be installed by running the code in install-R-packages.R. 
 
+In linux, do the following when installing packages: 
+
+```bash
+sudo apt-get update
+sudo apt install make
+sudo apt-get install build-essential
+```
+
+
 ## The Integrative Genomics Viewer (IGV) 
 
 There is a web version, but in my experience it does not work pretty well. I recommend installing it, it is available for all OS: <https://igv.org/download/html/oldtempfixForDownload.html>. 
