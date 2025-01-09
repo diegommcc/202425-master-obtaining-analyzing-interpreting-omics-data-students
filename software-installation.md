@@ -32,7 +32,7 @@ Run the following commands to add channels to your miniconda installation:
 
 ```bash
 # conda config --add channels defaults
-conda config --add channels annaconda
+conda config --add channels anaconda
 conda config --add channels conda-forge
 conda config --add channels bioconda
 ```
