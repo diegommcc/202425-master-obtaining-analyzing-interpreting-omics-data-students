@@ -1,0 +1,355 @@
+---
+title: "02 - Exercises: Types of Variables, Loops, and Vectorization"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+```
+
+## Variables and basic structures
+  
+### Assigning Names to Objects
+
+1. Create three variables `x`, `y`, and `z`, with values `10`, `20`, and `30` respectively. Compute their sum and store it in a new variable `total`.
+2. Print the class of each variable using `class()`.
+
+```{r}
+
+```
+
+
+### Working with Vectors
+
+1. Create a vector `v` containing numbers from `5` to `15`.
+2. Use vectorized operations to:
+  * Add `10` to each element.
+  * Calculate the square of each element.
+  * Determine which elements are greater than `12`.
+3. Create the vector `w <- 1:5` and guess the output of `v + w`
+
+
+```{r}
+
+```
+
+
+### Indexing and Subsetting
+
+1. Create a vector `cities` with the elements: `"New York"`, `"London"`, `"Paris"`, `"Berlin"`, `"Palencia"`.
+2. Use indexing to:
+  * Access the first and third elements.
+  * Exclude the second element.
+  * Retrieve elements that start with the letter `"P"`. Hint: Use `grep()`
+
+```{r}
+
+```
+
+  
+### Logical Operations
+
+1. Create a vector `scores` with values `55, 78, 92, 45, 89`.
+2. Use logical operations to:
+  * Identify elements greater than `70`.
+  * Count how many elements are greater than `70`.
+  * Find the position of scores greater than `70`.
+  
+```{r}
+
+```
+
+
+### Loops and Vectorization
+
+1. Write a `for` loop to calculate the square of each number in the vector `1:10`. Store the results in a new vector.
+2. Rewrite the same operation using vectorized functions.
+
+```{r}
+
+```
+
+
+### Matrices
+
+1. Create a `3x3` matrix with numbers from `1` to `9`.
+2. Use indexing to:
+  * Access the element in the second row and third column.
+  * Retrieve all elements in the first row.
+  * Replace the second column with the vector `10, 20, 30`.
+3. Compute the row sums and column sums of the matrix.
+
+```{r}
+
+```
+
+
+### Functions
+
+1. Write a function `square_and_add()` that takes a numeric vector and a number as input, squares the vector (`^`), adds the number to each element, and returns the result.
+
+```{r, eval = FALSE}
+## example
+square_and_add(c(1, 2, 3), 10)  # Expected: 11, 14, 19
+```
+
+2. Test your function with different inputs.
+
+```{r}
+
+```
+
+
+### Factors
+
+1. Create a factor `colors` from the vector `c("red", "blue", "red", "green", "blue")` with levels `"red"`, `"blue"`, and `"green"`.
+2. Check the class of the factor and its levels.
+
+```{r}
+
+```
+
+
+### Data Frames 
+
+1. Create a data frame `df` with three columns:
+  * `Name`: `"Alice", "Bob", "Charlie"`
+  * `Age`: `25, 30, 35`
+  * `Score`: `80, 95, 90`
+2. Access:
+  * The second row.
+  * The `Score` column.
+  * The `Age` of `"Bob"`.
+
+```{r}
+
+```
+
+
+### Working with Lists
+
+Create a list that contains the following elements:
+
+1. A numeric vector with the numbers 1 to 10.
+2. A character vector with the names of the first three months of the year.
+3. A matrix with 6 rows and 2 columns filled with random numbers between 1 and 100.
+4. Another list that contains:
+   * A factor with the levels "Yes" and "No".
+   * A logical vector of length 5.
+
+```{r}
+
+```
+
+   
+Now, do the following tasks: 
+
+1. Extract the numeric vector from the list and compute its sum.
+2. Retrieve the second column of the matrix in the list and find the maximum value.
+3. Add a new element to the main list: a data frame with columns `ID` (1 to 5) and `Score` (random numbers between 50 and 100).
+4. Access the factor and check its levels.
+
+```{r}
+
+```
+
+
+### Manipulating Data Frames
+
+Create a data frame with the following columns:
+1. `Name`: A character vector with 6 names.
+2. `Age`: A numeric vector with random ages between 20 and 40.
+3. `Score`: A numeric vector with random scores between 50 and 100.
+4. `Passed`: A logical vector indicating if the score is greater than or equal to 50.
+
+```{r}
+
+```
+
+
+Now, do the following:
+
+1. Subset the data frame to include only rows where `Passed` is `TRUE`.
+2. Add a new column called `Category`:
+   * Assign "Young" if `Age` < 30.
+   * Assign "Middle-aged" otherwise.
+3. Compute the average score of people in the "Young" category.
+4. Sort the data frame by `Score` in descending order.
+
+```{r}
+
+```
+
+
+## Programming basics
+
+### Conditional Expressions
+
+1. Write a function that receives a numeric value between -10 and 40 and by using a conditional statement:
+   * Prints "Below freezing" if the temperature is below 0°C.
+   * Prints "Cold" if the temperature is between 0°C and 10°C.
+   * Prints "Warm" if the temperature is between 10°C and 25°C.
+   * Prints "Hot" if the temperature is above 25°C.
+
+```{r}
+
+```
+
+### Creating Functions
+
+1. Create a function called `grade_classifier` that:
+   - Accepts a numeric score between 0 and 100.
+   - Returns:
+     - "Fail" for scores below 50.
+     - "Pass" for scores between 50 and 74.
+     - "Distinction" for scores of 75 or more.
+
+```{r}
+
+```
+
+
+### Scoping
+
+1. Write a function `outer_function` that:
+   * Defines a variable `x` inside the function as 5.
+   * Contains a nested function `inner_function` that defines a variable `y` as 10.
+   * Returns the sum of `x` and `y` using `inner_function`.
+
+  Call `outer_function` and check whether `x` and `y` are accessible in the global environment.
+
+2. Create a function `scope_test` that:
+   * Takes no arguments.
+   * Modifies a global variable `counter` by increasing it by 1.
+   * Returns the updated value of `counter`.
+
+   Test this function with the following steps:
+    * Define `counter <- 0` in the global environment.
+    * Call `scope_test` multiple times and observe how the value of `counter` changes.
+
+```{r}
+
+```
+
+## For loops and `apply`-related functions
+
+### Loops vs Vectorization
+
+1. Write a `for` loop that calculates the square of numbers from 1 to 10 and stores the results in a vector called `squares`. Rewrite the same code using vectorized operations.  
+
+2. Rewrite the following `while` loop using vectorization:  
+
+```{r}
+i <- 1
+results <- c()
+while (i <= 10) {
+  results <- c(results, i^2)
+  i <- i + 1
+}
+results
+```
+
+
+### `apply`
+
+1. Given the following matrix:  
+
+```{r}
+(mat <- matrix(1:12, ncol = 3))
+```
+
+* Use `apply` to compute the sum of each row.  
+* Use `apply` to compute the product of each column.  
+
+2. Create a 5x5 matrix of random numbers between 1 and 50 (check `sample`). Use `apply` to calculate the mean of each row and adding 5 to these values.
+
+
+
+### Aggregation with `aggregate()` and `by()`
+
+Using the following data frame:  
+
+```{r}
+(df <- data.frame(
+  age = c(21, 25, 19, 23, 22, 29, 20), 
+  gender = factor(c("male", "female", "female", "male", "female", "male", "male"))
+))
+```
+
+1. Use `aggregate()` to compute the mean and standard deviation of `age` grouped by `gender`.  
+
+```{r}
+
+```
+
+
+2. Use the `by()` function to calculate the mean and range of `age` grouped by `gender`.
+
+```{r}
+
+```
+
+
+3. Add a new column `score` to the data frame. Use `aggregate()` to compute the mean of both `age` and `score` grouped by `gender`.  
+
+```{r}
+
+```
+
+
+
+### Using `split()` and `lapply()`  
+
+Split the following data frame by the `group` column:  
+
+```{r}
+(data <- data.frame(
+  value = c(5, 10, 15, 20, 25, 30, 35),
+  group = factor(c("A", "A", "B", "B", "C", "C", "C"))
+))
+```
+
+Use `lapply` to calculate the sum of `value` for each group:
+
+```{r}
+
+```
+
+
+### Function for `lapply`
+
+Given this list: 
+
+```{r}
+data_list <- list(
+  df1 = data.frame(A = c(1, 2, 3), B = c(4, 5, 6)),
+  df2 = data.frame(A = c(10, 20, 30), C = c(40, 50, 60)),
+  df3 = data.frame(B = c(100, 200, 300), A = c(1, 2, 3))
+)
+data_list
+```
+
+Create a function that receives two parameters: a list and a string. Inside the function, it should iterate the list (using `lapply`) and compute the mean of the column given in the second parameter.
+
+```{r}
+
+```
+
