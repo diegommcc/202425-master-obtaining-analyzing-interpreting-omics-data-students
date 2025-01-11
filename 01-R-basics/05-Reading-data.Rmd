@@ -1,5 +1,5 @@
 ---
-title: "03 - Data visualization"
+title: "05 - Reading data from and to disk"
 author: "Diego Mañanes"
 date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
 documentclass: article

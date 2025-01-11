@@ -11,9 +11,9 @@
 
 <meta name="author" content="Diego Mañanes" />
 
-<meta name="date" content="2025-01-07" />
+<meta name="date" content="2025-01-11" />
 
-<title>03 - Data visualization</title>
+<title>05 - Reading data from and to disk</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -1485,9 +1485,9 @@ border-radius: 0px;
 
 
 
-<h1 class="title toc-ignore">03 - Data visualization</h1>
+<h1 class="title toc-ignore">05 - Reading data from and to disk</h1>
 <h4 class="author">Diego Mañanes</h4>
-<h4 class="date">January 07, 2025</h4>
+<h4 class="date">January 11, 2025</h4>
 
 </div>
 
@@ -1528,12 +1528,12 @@ written to disk:</p>
 )
 df.example %&gt;% head()</code></pre>
 <pre><code>##               Sample_ID   Class Num_Var_1 Num_Var_2
-## Sample_ID_1 Sample_ID_1 Class_4  74.13203         4
-## Sample_ID_2 Sample_ID_2 Class_4  79.27728         5
-## Sample_ID_3 Sample_ID_3 Class_2  65.00733         2
-## Sample_ID_4 Sample_ID_4 Class_1  60.66311         1
-## Sample_ID_5 Sample_ID_5 Class_4  73.66250         4
-## Sample_ID_6 Sample_ID_6 Class_2  55.38385         4</code></pre>
+## Sample_ID_1 Sample_ID_1 Class_4  65.95039         3
+## Sample_ID_2 Sample_ID_2 Class_1  62.18915         1
+## Sample_ID_3 Sample_ID_3 Class_1  56.83394         4
+## Sample_ID_4 Sample_ID_4 Class_4  62.45467         0
+## Sample_ID_5 Sample_ID_5 Class_1  60.75045         0
+## Sample_ID_6 Sample_ID_6 Class_3  51.60350         2</code></pre>
 <p>Now, we can write it as a TSV/CSV. The most important thing when
 reading/writing data to disk is the path were the files are located. If
 you have opened the Rproject, the following code should work. If not,
@@ -1548,7 +1548,7 @@ you should provide a correct path (a directory that exists).</p>
   message(&quot;Provide a correct file path!!&quot;)
 }</code></pre>
 <p>Now, there should be a tsv file in
-/Users/dmananes/Documents/Nebrija/Materials/202425-master-obtaining-analyzing-interpreting-omics-data-private/01-R-basics/data.
+/Users/dmananes/Documents/Nebrija/Materials/202425-master-obtaining-analyzing-interpreting-omics-data-students/01-R-basics/data.
 We have used the <code>&quot;\t&quot;</code> character as separator, but it could
 be any other one.</p>
 <p>We can check if the file exists by listing the files.</p>
@@ -1567,20 +1567,20 @@ variable:</p>
 <p>We can check if both datasets are the same:</p>
 <pre class="r"><code>df.example %&gt;% head()</code></pre>
 <pre><code>##               Sample_ID   Class Num_Var_1 Num_Var_2
-## Sample_ID_1 Sample_ID_1 Class_4  74.13203         4
-## Sample_ID_2 Sample_ID_2 Class_4  79.27728         5
-## Sample_ID_3 Sample_ID_3 Class_2  65.00733         2
-## Sample_ID_4 Sample_ID_4 Class_1  60.66311         1
-## Sample_ID_5 Sample_ID_5 Class_4  73.66250         4
-## Sample_ID_6 Sample_ID_6 Class_2  55.38385         4</code></pre>
+## Sample_ID_1 Sample_ID_1 Class_4  65.95039         3
+## Sample_ID_2 Sample_ID_2 Class_1  62.18915         1
+## Sample_ID_3 Sample_ID_3 Class_1  56.83394         4
+## Sample_ID_4 Sample_ID_4 Class_4  62.45467         0
+## Sample_ID_5 Sample_ID_5 Class_1  60.75045         0
+## Sample_ID_6 Sample_ID_6 Class_3  51.60350         2</code></pre>
 <pre class="r"><code>df.example.new %&gt;% head()</code></pre>
 <pre><code>##               Sample_ID   Class Num_Var_1 Num_Var_2
-## Sample_ID_1 Sample_ID_1 Class_4  74.13203         4
-## Sample_ID_2 Sample_ID_2 Class_4  79.27728         5
-## Sample_ID_3 Sample_ID_3 Class_2  65.00733         2
-## Sample_ID_4 Sample_ID_4 Class_1  60.66311         1
-## Sample_ID_5 Sample_ID_5 Class_4  73.66250         4
-## Sample_ID_6 Sample_ID_6 Class_2  55.38385         4</code></pre>
+## Sample_ID_1 Sample_ID_1 Class_4  65.95039         3
+## Sample_ID_2 Sample_ID_2 Class_1  62.18915         1
+## Sample_ID_3 Sample_ID_3 Class_1  56.83394         4
+## Sample_ID_4 Sample_ID_4 Class_4  62.45467         0
+## Sample_ID_5 Sample_ID_5 Class_1  60.75045         0
+## Sample_ID_6 Sample_ID_6 Class_3  51.60350         2</code></pre>
 </div>
 <div id="using-the-readr-r-package" class="section level2" number="3">
 <h2><span class="header-section-number">3</span> Using the
