@@ -1,0 +1,86 @@
+---
+title: "01 - Getting familar with GEO and SRA"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4,
+  eval = FALSE
+)
+```
+
+## Introduction 
+
+The Gene Expression Omnibus ([GEO](https://www.ncbi.nlm.nih.gov/geo/)) is a public repository maintained by the National Center for Biotechnology Information (NCBI). It hosts a wide variety of high-throughput experimental data, such as transcriptomics (e.g., microarray and RNA-Seq), epigenomics (e.g., CHiP-Seq and DNA methylation), and more. GEO provides both processed data (e.g., normalized expression matrices) and metadata (e.g., study design, experimental conditions, sample characteristics).
+
+Using GEO, we can:
+
+* Search for datasets related to specific genes, diseases, or experimental conditions.
+* Download preprocessed data for immediate use in downstream analyses.
+* Learn about study design through metadata to contextualize results.
+
+On the other hand, the Sequence Read Archive ([SRA](https://www.ncbi.nlm.nih.gov/sra)) is another NCBI resource that focuses on storing raw sequencing data from high-throughput sequencing experiments. Unlike GEO, SRA provides access to the raw sequencing reads, which allows researchers to perform custom analyses, such as quality control, alignment, and expression quantification, using their preferred pipelines and tools.
+
+SRA is a complementary resource to GEO:
+
+* While GEO often hosts processed data, SRA provides the raw sequencing data from the same studies.
+* Researchers can access SRA data through tools like `sra-tools`, which enables direct downloading and conversion of data into analysis-ready formats.
+
+## Exploring GEO
+
+We are going to explore different datasets to get familiar with GEO. In particular, you can find the list of experiments that we are going to explore: GSE180540, GSE178209, GSE122108, GSE213268. 
+
+## `sra-tools`
+
+`sra-tools` is a command-line software suite developed by the NCBI to facilitate the access and retrieval of raw sequencing data from SRA. `sra-tools` is designed to:
+
+* Download raw sequencing data: fetch raw data (e.g., FASTQ, SRA format) from SRA for specific experiments or samples.
+* Convert data formats: convert the downloaded SRA format files into more commonly used formats, such as FASTQ, for downstream analyses.
+* Enable programmatic access: allow researchers to automate data retrieval using scripts, which is especially useful for handling large datasets.
+
+In this exercise, we are going to write a script to download raw reads from SRA in a programmatic way. We are going to try to make it robust and general, so that it may be useful in the future.
+
+You can check here its GitHub repository and the documentation of each of its function: <https://github.com/ncbi/sra-tools>. Anyhow, the workflow that we are going to follow consists of running the `fasterq-dump` command, which directly downloads the data in [SRA format](https://www.ncbi.nlm.nih.gov/sra/docs/sra-data-formats/) and convert the files into FASTQ. 
+
+Check the following links to get to know about how to use it: 
+
+* <https://rnnh.github.io/bioinfo-notebook/docs/fasterq-dump.html>
+* <https://open.bioqueue.org/home/knowledge/showKnowledge/sig/fasterq-dump>
+* Official documentation `sra-tools`: <https://github.com/ncbi/sra-tools/wiki/HowTo:-fasterq-dump>
+
+### Writting a script
+
+This is a tool that runs from the command line. We could write a `bash` script to do it, but instead we are going to use Python and run the commands using the `subprocess` module. Follow these instructions to develop the script: 
+
+1. It should receive three parameters (use the `argparse` module): 
+  * `-s` or `--sra`: SRA numbers to process. it can be only one or more separated by a blank space. 
+  * `-o` or `--output`: output directory for downloaded files. 
+  * `-k` or `--keep-sra`: True or false. If keeping SRA files after conversion to FASTQ. 
+2. First of all, it should check if the SRA numbers are valid. SRA numbers always start with `SRR`.
+3. Use the `fasterq-dump` command to download the files. Check below the parameters to be used. The script should handle errors from `fasterq-dump`. 
+
+```{bash}
+## parameters for fasterq-dump (besides the basic input and output)
+--skip-technical
+--split-files
+--progress
+--threads 4
+```
+
