@@ -1,4 +1,4 @@
-# Materials for 'Obtaining, analyzing, and interpreting omics data' subject (private version) - Course 2024/25 - Nebrija University
+# Materials for 'Obtaining, analyzing, and interpreting omics data' subject (students version) - Course 2024/25 - Nebrija University
 
 This subject belongs to the [Master in Bioinformatics](https://www.nebrija.com/programas-postgrado/master/bioinformatica/) of the Nebrija University. The repository contains practical exercises for each of the Modules of the subject. 
 
