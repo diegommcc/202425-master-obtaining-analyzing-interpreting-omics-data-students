@@ -1,0 +1,96 @@
+---
+title: "More exercises"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+projectPath <- here::here()
+setwd(file.path(projectPath, "01-R-basics/data")) ## what is this???
+
+library("dplyr")
+```
+
+
+## Introduction 
+
+These exercises don't belong to a particular module, the idea is to solve them using the tools we have learned. 
+
+## Leukemia dataset
+
+### Loading data
+
+You need to read the `leukemia.data.txt` and `leukemia.class.txt` files located in the `data` folder. 
+
+* `leukemia.data.txt`: make sure you read it correctly: the file contains row names and we don't want them to be part of the data frame content. Hint: check the `row.names` parameter from the `read.table` function. In addition, this file contains just numbers, so in order to be able to apply functions such as `apply()`, it is better if you transform it to a matrix (check `as.matrix()` or `data.matrix()` functions).
+* `leukemia.class.txt`: we could read it as a data frame. However, as it is just a vector, it is easier if we use the `scan()` function. Check the documentation and the `what` parameter. This should be encoded as a factor. 
+* Create a vector with the sex of patients. Do it by alternating the labels `"Male"` and `"Female"` and convert the object into a factor. * Finally, bind the two factors into a data frame. 
+
+```{r}
+
+```
+
+### Counting samples
+
+Now, just count the number of patients that we have for each categorical variable using the `table()` function.
+
+```{r}
+
+```
+
+Do the same using the `group_by()` and `summarize()` functions + the `n()` function. 
+
+```{r}
+
+```
+
+
+### Accessing data
+
+Let's compute different stuff for different patients. Assume that `leuk.dat.m` has patients in columns and genes in rows. 
+
+* Compute the mean expression levels of all genes together only for those patients that are Female.
+* Same as above but for every gene separately. 
+* Compute the median expression levels of every gene grouped by Sex. 
+* Use the `t.test()` function to compute those genes that are different between the class of leukemia. then, obtain the gene name of those with p-value <= 0.001. 
+* Compute the mean of the second gene for males and females. 
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+
