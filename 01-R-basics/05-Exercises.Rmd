@@ -1,0 +1,94 @@
+---
+title: "05 - Exercises: Reading data from and to disk"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+
+library("dplyr")
+```
+
+
+## Reading tsv files
+
+The following files have slightly different: some of them have header (column names), others have comments, others have some missing values. The idea is to read them as data frames, and modify thee data frames to look alike. These files can be found in the `data` folder. Make sure to provide the correct path. Use the pre-built functions from R-base. 
+
+### `d1.txt`
+
+It contains an `NA`. You need to find it and replace it by `0`. Hint: use the `is.na()` function. 
+
+```{r}
+
+```
+
+### `d2.txt`
+
+This file also contains some missing values. They might be `NA` or a blank space (`""`). 
+
+* If the column they are is categorical, you have to set them to `"Missing"`. 
+* On the other hand, if the column is numeric, you set them to `0`.
+
+Hint: to make it general, use `lapply()` (remember that a data frame can be treated as a list) and `as.data.frame()` to come back from a list to a data frame. Check the following example to understand `as.data.frame()`:
+
+```{r}
+list(
+  a = 1:10,
+  b = LETTERS[1:10],
+  c = rep(c("F", "R"), 5)
+) %>% as.data.frame()
+```
+
+**Solution:**
+
+```{r}
+
+```
+
+### `d3.txt`
+
+* Similar to `d1.txt`: two `NA`s of numeric variables. Set them to zero. 
+* The file does not contain header (column names). Assign the same column names to the ones used in the previous examples. 
+
+```{r}
+
+```
+
+### `d4.txt`
+
+* It does not contain column names. 
+* Also, it contains comments starting with the `@` character. These comments don't have a tabular structure, you need to avoid R to read them. 
+
+```{r}
+
+```
+
+### Writing data
+
+* Now, concatenate the four data frames (they should have the same structure).
+* Assign as row names a vector with the following structure: `Sample_<num sample>`. `<num sample>` should correspond to the number of sample (order of samples). Hint: use `paste()`. 
+* Write the resulting data frame to disk as a csv file. It should contain both column and row names. 
+
+
+```{r}
+
+```
+
