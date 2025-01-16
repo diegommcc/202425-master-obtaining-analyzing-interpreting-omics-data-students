@@ -1,0 +1,6 @@
+ID	Age	Gender	Y
+a1	12	M	
+a2	22	M	25
+a3	13		22
+a7	16	F	26
+b15	19	F	24.3
