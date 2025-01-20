@@ -37,17 +37,40 @@ The following files have slightly different: some of them have header (column na
 It contains an `NA`. You need to find it and replace it by `0`. Hint: use the `is.na()` function. 
 
 ```{r}
-
+?read.delim
 ```
+
+```{r}
+absolute.path <- "/Users/dmananes/Documents/Nebrija/Materials/202425-master-obtaining-analyzing-interpreting-omics-data-students/01-R-basics/r-data"
+```
+
+```{r}
+file.path(absolute.path, "d1.txt")
+paste(absolute.path, "d1.txt", sep = "/")
+```
+
+```{r}
+d1 <- read.delim(file = file.path(absolute.path, "d1.txt"))
+d1
+```
+
+```{r}
+d1[is.na(d1)] <- 0
+d1
+```
+
+
 
 ### `d2.txt`
 
 This file also contains some missing values. They might be `NA` or a blank space (`""`). 
 
 * If the column they are is categorical, you have to set them to `"Missing"`. 
-* On the other hand, if the column is numeric, you set them to `0`.
+* On the other hand, if the column is numeric or integer, you set them to `0`.
 
 Hint: to make it general, use `lapply()` (remember that a data frame can be treated as a list) and `as.data.frame()` to come back from a list to a data frame. Check the following example to understand `as.data.frame()`:
+
+
 
 ```{r}
 list(
@@ -60,8 +83,57 @@ list(
 **Solution:**
 
 ```{r}
+d2 <- read.delim(file = file.path(absolute.path, "d2.txt"))
+```
+
+```{r}
+d2
+```
+
+
+```{r}
+?lapply()
+```
+
+```{r}
 
 ```
+
+
+```{r}
+d2.mod <- lapply(
+  X = d2, 
+  FUN = function(column) {
+    if (class(column) == "character") {
+      column[is.na(column)] <- "Missing"
+      column[column == ""] <- "Missing"
+    } else if (class(column) == "integer" | class(column) == "numeric") {
+      column[is.na(column)] <- 0
+    }
+    return(column)
+  }
+) %>% as.data.frame()
+d2.mod
+```
+
+
+```{r}
+list.df <- lapply(
+  X = d2, 
+  FUN = function(column) {
+    if (class(column) == "character") {
+      column[is.na(column)] <- "Missing"
+      column[column == ""] <- "Missing"
+    } else if (class(column) == "integer" | class(column) == "numeric") {
+      column[is.na(column)] <- 0
+    }
+    return(column)
+  }
+)
+d2.mod <- as.data.frame(list.df)
+```
+
+
 
 ### `d3.txt`
 
@@ -69,8 +141,28 @@ list(
 * The file does not contain header (column names). Assign the same column names to the ones used in the previous examples. 
 
 ```{r}
-
+d3 <- read.delim(file.path(absolute.path, "d3.txt"), header = FALSE)
+d3
 ```
+
+```{r}
+d3[is.na(d3)] <- 0
+d3
+```
+
+
+```{r}
+c("sss", "fff")
+```
+
+```{r}
+colnames(d3) <- colnames(d2.mod)
+colnames(d3) <- c("ID", "Age", "Gender", "Y")
+d3
+```
+
+
+
 
 ### `d4.txt`
 
@@ -78,7 +170,8 @@ list(
 * Also, it contains comments starting with the `@` character. These comments don't have a tabular structure, you need to avoid R to read them. 
 
 ```{r}
-
+d4 <- read.delim(file.path(absolute.path, "d4.txt"), header = F, comment.char = "@")
+colnames(d4) <- colnames(d3)
 ```
 
 ### Writing data
@@ -87,8 +180,33 @@ list(
 * Assign as row names a vector with the following structure: `Sample_<num sample>`. `<num sample>` should correspond to the number of sample (order of samples). Hint: use `paste()`. 
 * Write the resulting data frame to disk as a csv file. It should contain both column and row names. 
 
+```{r}
+df.final <- rbind(d1, d2.mod, d3, d4)
+```
 
 ```{r}
-
+dim(df.final)
+nrow(df.final)
+ncol(df.final)
 ```
+
+
+```{r}
+1:20
+seq(20)
+```
+
+
+```{r}
+rownames(df.final) <- paste0("Sample_", seq(nrow(df.final)))
+df.final
+```
+
+
+```{r}
+# write.csv(x, file = )
+```
+
+
+
 

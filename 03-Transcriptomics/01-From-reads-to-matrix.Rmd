@@ -1,0 +1,273 @@
+---
+title: "01 - Preprocessing of raw data: from reads to expression matrix"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4,
+  eval = FALSE
+)
+```
+
+## Introduction 
+
+In this practical exercise, we are going to see the necessary tools and steps to go from sequenced reads (FASTQ files provided by the sequencer) to the expression matrix (numeric matrix which contains how much a gene is expressed in each sample). 
+
+As we have seen in the theory part, usually we receive the data in form of reads in FASTA or FASTQ files that we need to process and align to a genome reference. In particular, we need to do the following steps: 
+
+1. Check the quality of reads contained in the FASTQ files. 
+2. Trimming of adapters and low quality bases/reads.
+3. Alignment: any aligner (besides pseudoaligners) need an indexed genome reference and an annotation (a GTF file that determines which genomic regions correspond to genes, isoforms, etc.). Then, high quality reads contained in the fastq files are aligned. 
+4. Quantification: finally, reads aligned to a determined genomic region (gene) are counted, so that we can then translate this information into a expression matrix. 
+
+We are going to use a standard workflow with tools that have been extensively tested for each of these steps. However, there are alternative tools that are worth mentioning, such as pseudoalingers. You will find a section about them below. 
+
+## Data to be analyzed
+
+For this analysis, we are going to use a bulk RNA-seq dataset on peritoneal macrophages from [this article](https://www.cell.com/immunity/fulltext/S1074-7613(23)00021-3). We are going to download only one of the samples and do the whole workflow. In addition, as these steps may take long and your computers couldn't be able to handle big files, we are going to analyze a downsampled version of this file. Instead of 30 million reads (approx), it contains around 500,000, which is perfectly duable for any computer. We are going to download the file from the SRA web page to get familiar with it, but I will give you the files we will be playing with. 
+
+Follow these steps: 
+
+1. Go to this link: <https://www.ncbi.nlm.nih.gov/Traces/study/?acc=PRJNA880299>
+2. Scroll down and click on SRR21548756
+3. Go to the FASTA/FASTQ tab and download the data. 
+4. Locate the file in `202425-master-obtaining-analyzing-interpreting-omics-data-students/03-Transcriptomics/data/01-data/raw.data`
+
+## Structuring the project
+
+For consistency, we are going to place all the data in this folder: `03-Transcriptomics/data/01-data`. In this folder, we are going to create the following tree of directories: 
+
+```{bash}
+01-data/ 
+├── raw.data/ # Contains the original FASTQ files 
+|   └── fastqc.output/ # contains the output after running fastqc
+├── processed.data/ # Contains trimmed FASTQ files 
+|   ├── multiqc.output/ # Contains BAM files and RSEM results 
+|   └── fastqc.output/ # contains the output after running fastqc
+├── aligned.data/ # Contains BAM files and RSEM results 
+|   └── multiqc.output/ # contains the output after running fastqc
+└── reference/ # Contains reference genome files
+    ├── mm10.ensembl/ # raw data to build genome reference
+    └── mm10.ensembl.star.index/ # index for star
+```
+
+**Note**: this is my personal way to sort projects. The point is that it is highly recommended separating raw from processed data and structuring all your projects in the same way, so that scripts can work independently of the project, you can find your files easily, etc. 
+
+## Workflow
+
+### Step 1: exploring FASTQ file and checking sequencing quality 
+
+Just to get familiar with the format, we can explore the file using terminal commands. You will see that each read corresponds to 4 lines, each of them containing different information:
+
+1. Sequence identifier
+2. Sequence
+3. Quality score identifier line (consisting only of a +)
+4. Quality score
+
+```{bash}
+### if compressed:
+## in macos
+zcat < raw.reads/SRR21548756.fastq.gz | more
+## in linux 
+zcat raw.reads/SRR21548756.fastq.gz | more
+
+### if not:
+more raw.reads/SRR21548756.fastq
+```
+
+As you may imagine, we cannot explore these files on our own because they are not human-friendly. Therefore, the very first step is to check the quality of the reads contained in the file using computational tools able to extract this information from the FASTQ format. the classic one is [`FastQC`](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/), which will generate an HTML per sample with some info. It should be available in the `rna-seq-env` environment that we created at the beginning: 
+
+```{bash}
+conda activate rna-seq-env
+fastqc --help
+```
+
+You see there are different parameters. The most important ones are the output and input. For consistency, we are going to go to the root of this path and do everything from there, so that you won't need to change the paths.
+
+```{bash}
+fastqc -o raw.reads/fastqc.output raw.reads/SRR21548756_down.fastq
+```
+
+This will generate a HTML report with information about the quality of our reads. What can you tell me about the data? 
+
+### Step 2: Trimming low quality reads and adapters
+
+Then, we need to remove adapters (primers used during the library preparation) and low quality reads from our FASTQ files before alignment. To do so, we are going to use the tool [`TrimGalore`](https://github.com/FelixKrueger/TrimGalore), which is a wrapper around [`cutadapt`](https://github.com/marcelm/cutadapt), the tool in charge of the trimming, and `FastQC`, which will check how many reads have been discarded. Again, these tools should be available from the `rna-seq-env` environment. 
+
+Before running the command, let's read the _Adaptive quality and adapter trimming with `TrimGalore`_ section from the [`TrimGalore`'s documentation](https://github.com/FelixKrueger/TrimGalore/blob/master/Docs/Trim_Galore_User_Guide.md).
+
+```{bash}
+trim_galore \
+  --stringency 3 \
+  --length 30 \
+  -o processed.reads \
+  --fastqc \
+  --fastqc_args "--outdir processed.reads/fastqc.output" \
+  --basename SRR21548756_down \
+  raw.reads/SRR21548756_down.fastq > logs/SRR21548756_down.cutadapt.log 2>&1
+```
+
+Please, check the documentation and write below what every parameter used here does: 
+
+* `--stringency`
+* `--length`
+* `--paired`
+* `-quality`
+
+Now, let's explore the output of `FastQC` on the trimmed FASTQ. 
+
+**Bonus**: `multiqc`
+
+This time, we are processing only one sample. We are doing it like this because we cannot wait for all the samples to be processed. However, imagine we need to explore the `FastQC` output of 60 samples: this would take us a lot of time and effort. The `multiqc` tool intends to summarize all these outputs into a single report easily explorable. Let's run it in one sample just to see the aspect of the report, but its real utility is whenever you have several FASTQ files: 
+
+```{bash}
+multiqc processed.reads -m fastqc -m cutadapt -o processed.reads/multiqc.output
+```
+
+Again, what can you tell me about our sample? 
+
+### Step 3: Alignment and quantification using `STAR` + `RSEM`
+
+We are going to use [`RSEM`](https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-12-323), a tool that estimates gene and isoform (if given) expression levels from RNA-seq data. Within RSEM, we not only estimate gene expression, but it also implements functions for the alignment part. There are several aligners that work well for the kind of data that we usually have in RNA-seq, but we are going to use [`STAR`](https://academic.oup.com/bioinformatics/article/29/1/15/272537). There shouldn't be big differences between using `STAR` or [`Bowtie2`](https://bowtie-bio.sourceforge.net/bowtie2/index.shtml), for instance, so let's go for it. 
+
+#### Preparing reference and indexing genome
+
+`RSEM` implements the `rsem-prepare-reference` command that creates the indices for the aligner we choose and prepare the transcript references for the quantification. First, we need to download the genome reference for mouse. There are several options to do so, but here we are going to use the GRCm38 version provided by ENSEMBL. Just to show you how to download this information from ENSEMBL, click on the following link: <https://nov2020.archive.ensembl.org/Mus_musculus/Info/Index>. 
+
+Instead of downloading the whole genome reference, we are going to use a reduced version which only contains the chromosome 6 to make the process feasible in this practice. If it takes a long time anyway, we can use an indexed genome reference that I've already prepared. In addition, the commands used here would be the same if we were providing a complete version of the genome. 
+
+**Note**: if you want to reproduce the files I am giving you, you would have to parse the GTF file so that it only contains annotations within the chromosome 6 using a similar approach: 
+
+```{bash}
+grep -P '^6\t' Mus_musculus.GRCm38.102.gtf > Mus_musculus.GRCm38.102.chr6.gtf
+```
+
+Now, we can build the reference. Take into account that you need to uncompress the files (check `gzip -d`): 
+
+```{bash}
+## it should take around 4 minutes with 2 threads
+rsem-prepare-reference --gtf reference/mm10.ensembl/Mus_musculus.GRCm38.102.chr6.gtf \
+    --star \
+    -p 6 \
+    reference/mm10.ensembl/Mus_musculus.GRCm38.dna.chromosome.6.fa \
+    reference/mm10.ensembl.star.index/mm10.STAR
+```
+
+Now, you can go to the output path and check the files created by `STAR`. They will allow it to efficiently carry out the alignment. 
+
+
+#### Alignment and quantification 
+
+Once we've already built the reference, we can start with the alignment and estimation of gene expression. `RSEM` does both steps within the `rsem-calculate-expression` command. It has several parameters important to consider: 
+
+* In case you have paired-end data, you need to set `--paired-end`. In this case we are analyzing single-end data, so we don't need to use that flag. 
+* You need to set the aligner used under the hood, in this case `--star`.
+* `--estimate-rspd` enables `RSEM` to learn from data how the reads are distributed across a transcript, so that it checks if there are positional biases of reads within genes/transcripts.
+* `--fragment-length-mean`: this is important in case of analyzing single-end data, because in paired-end data we already know the fragment length. It sets the expected fragment length of transcripts, which is important when assigning reads to transcripts. This mainly depends on the kind of library preparation performed before sequencing. For regular RNA-seq protocols, setting a value around 180pb is reasonable. 
+* `--fragment-length-sd`: as the distribution is assumed to be normal, this sets the standard deviation.
+
+For our data, the command would be something like this: 
+
+```{bash}
+rsem-calculate-expression \
+    -p 6 \
+    --output-genome-bam \
+    --sampling-for-bam \
+    --star \
+    --append-names \
+    --fragment-length-mean 180.0 \
+    --fragment-length-sd 20.0 \
+    --estimate-rspd \
+    --ci-memory 2048 \ 
+    processed.reads/SRR21548756_down_trimmed.fq \ ## uncompressed
+    reference/mm10.ensembl.star.index/mm10.STAR \ ## name of reference, not only path
+    aligned.data/SRR21548756_down >> logs/SRR21548756_down.RSEM.log 2>&1 
+```
+
+As we are only running one downsampled sample and aligning only to the chromosome 6, it should be quick. After this, we should be able to find the following files: 
+
+* BAM files, containing the resulting alignment. There should be two versions: one at the gene and another one at the transcript levels. 
+* genes.results: it contains the estimated expression levels of each gene contained in the GTF file. In this case, we will only find genes located in the chromosome 6. 
+* isoforms.results: this is the same information at the isoform level. The accuracy of these estimates depends on the coverage of reads, and thus the quality of the alignment. Indeed, single-end sequencing is not ideal for this kind of analyses, since we don't really know the fragment length and therefore we are unsure of the captured coverage of each transcript. 
+* A directory with some statistics about the model used to estimate gene expression. 
+* A log file with some information about time, number of mapped reads, etc. 
+
+
+###### Using `Qualimap` to check the quality of the alignment
+
+[`Qualimap`](http://qualimap.conesalab.org/) is a tool that computes different metrics to evaluate the quality of an aligment. It can be used not only for RNA-seq but for any sequencing-based data. We are going to run it in our sample. Firstly, it requires to sort and index the BAM file, so we are going to do it using [`samtools`](https://www.htslib.org/): 
+
+```{bash}
+samtools sort -o aligned.data/SRR21548756_down.genome.sorted.bam -T temp.sort.SRR21548756_down aligned.data/SRR21548756_down.genome.bam
+samtools index aligned.data/SRR21548756_down.genome.sorted.bam
+```
+
+Now, we can use `qualimap` as follows: 
+
+```{bash}
+qualimap rnaseq \
+    -outdir aligned.data/qualimap.output \
+    -a proportional \
+    -bam aligned.data/SRR21548756_down.genome.sorted.bam \
+    -gtf reference/mm10.ensembl/Mus_musculus.GRCm38.102.chr6.gtf \
+    --java-mem-size=8G
+```
+
+This command generates an HTML with information about the quality of our alignment. Again, we can run `multiqc` like before in order to get a summarized report of this step. Again, it is not very useful considering that we only have one sample, but it will be whenever you perform an actual analysis. 
+
+```{bash}
+multiqc aligned.data -o aligned.data/multiqc.output
+```
+
+Probably the results are horrible. Don't worry, this is because we are using a downsampled FASTQ and only the chromosome 6 as reference, hence only a small portion of reads are alignable. 
+
+##### Exploring BAM file
+
+Now, we can inspect the BAM file. This is not necessary in a bulk RNA-seq analysis, but we are going to check it out anyway. We can use [`IGV`](https://igv.org/) to do it (install it if it is not). It requires the sorted and indexed BAM that we have generated in the previous step: 
+
+* Select the genome reference we have used (mouse mm10).
+* Load the `SRR21548756_down.genome.sorted.bam` file. There will get open two tracks: one with reads and another one with the coverage. 
+* Go to the _Stk38l_ locus and check the promoter region. 
+
+Take into account that this is a FASTQ with a very low number of reads. The signals don't seem very strong because with this sequencing depth we cannot have reliable estimates of gene expression.
+
+#### Inspecting gene expression estimates
+
+Now, we can explore the estimates performed by `RSEM`. This information is contained in the genes.results file, a tabular file containing:
+
+* `gene_id`: Contains the identifier for each gene. In this case, since the ENSEMBL reference was used, it includes the ENSEMBL gene ID (e.g., ENSG00000139618) along with the associated gene symbol (e.g., BRCA2), separated by a _.
+* `transcript_id`: lists the transcript IDs corresponding to the gene. This includes all transcripts annotated for the gene in the reference. If using 
+* `length`: the total length of the gene in base pairs. This is derived by summing the lengths of all exonic regions for the gene using the reference. 
+* `effective_length`: the "usable" length of the gene for RNA-seq read alignment, considering biases such as fragment length. This is therefore based on the reads of our experiment. Effective length is usually shorter than the actual length due to regions that are unlikely to capture reads based on library fragment size.
+* `expected_count`: the number of reads (or fragments, for paired-end data) mapped to the gene, adjusted probabilistically for ambiguous mappings (multi-mapping events).
+* `TPM` (Transcripts Per Million): normalized expression metric that represents the relative abundance of a gene in the sample accounting also for gene length.
+* `FPKM` (Fragments Per Kilobase per Million mapped reads): another normalized expression metric that accounts for sequencing depth and gene length. Unlike TPM, FPKM does not normalize the total sum of expression to 1 million.
+
+Don't worry about the normalized units, we will explain them in the following classes. The values that are interesting for us are contained in the `expected_count`. In a regular bulk RNA-seq, we would need to parse these files, extract the `expected_count` and `gene_id` information, and build the expression matrix (genes x samples). 
+
+## Alternative workflows
+
+For many of the steps exhibited here, there are alternative tools that should work very well. Specifically: 
+
+* For the alignment part, `RSEM` is also compatible with other aligners such as [`Bowtie2`](https://bowtie-bio.sourceforge.net/bowtie2/index.shtml). 
+* There is another family of algorithms called pseudoalingers that are also great for estimating gene expression. In particular, [`Salmon`](https://salmon.readthedocs.io/en/latest/salmon.html) seems to be great, integrating not only the alignment part but also the quantification. 
+* [`Alevin`](https://salmon.readthedocs.io/en/latest/alevin.html) is also great, but more for single-cell RNA-seq data.
+
+The results should be pretty similar. If I had to implement a pipeline nowadays, maybe I would try the `Salmon` workflow, as it seems to be faster and equally robust compared with `STAR`+`RSEM`, so check the literature if interested!
