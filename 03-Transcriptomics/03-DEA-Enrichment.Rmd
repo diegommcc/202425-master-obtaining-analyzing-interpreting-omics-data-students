@@ -1,0 +1,979 @@
+---
+title: "03 - Differential expression and enrichment analyses"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, dpi = 300,
+  base.dir = ".", 
+  # fig.path = "", 
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+
+## general
+library("dplyr")
+library("stringr")
+
+## viz
+library("ComplexHeatmap")
+library("ggplot2")
+
+## rna-seq
+library("edgeR")
+library("limma")
+library("org.Hs.eg.db")
+library("msigdb")
+library("clusterProfiler")
+library("fgsea")
+
+# project path
+projectPath <- getwd() 
+source(file.path(projectPath, "src", "helperFunctions.R"))
+```
+
+### Introduciton to `limma` and differential expression analysis
+
+There are several R packages that implement statistical approaches to find differentially expressed genes in the context of bulk RNA-seq. The most popular with bioinformaticians for RNA-seq are [`limma`](https://bioconductor.org/packages/release/bioc/html/limma.html), [`edgeR`](https://bioconductor.org/packages/release/bioc/html/edgeR.html), and [`DESeq2`](https://bioconductor.org/packages/release/bioc/html/DESeq2.html). In this exercise, we are going to use `limma`, as it is flexible and robust against false positives. Any of these methods is completely valid and should yield very similar results, so feel free to explore them! 
+
+`limma` was originally developed for differential expression analysis of microarray data. It is based on linear regression, a powerful analysis tool that forms the basis of many more complicated analyses. In this case, the idea is to use linear regression to determine differential expression of genes under different conditions. `limma` implements a particular case of linear regression which makes it suitable for testing many genes while handling the usual small sample size of RNA-seq/microarray experiments. In addition, `limma` is particularly powerful because of its flexibility (you can include multiple categorical and continuous variables) and how it deals with the false discovery rate compared with other tools. 
+
+### Linear models
+
+The objective of DEA is to discover which features (genes) are different between groups of interest. Sometimes, you will have more complicated situations where other covariables such as age or sex have an impact on gene expression, but you are not interested in them. In order to find only those genes different between the conditions of interest, we need models able to control for these other sources of variability. We use linear regression models because they allow us to define very complex experimental designs that account for these issues whereas estimate those genes different between groups. Let's make a very brief introduction to linear models. 
+
+#### Linear model between two continous variables
+
+In general, a model is a simplified representation of how we think different variables relate to each other. In this case, we have measured several variables (gene expression) and want to understand how these measurements are influenced by other variables, such as a treatment or a different genotype. We can model this relationship by using linear regression. Probably, you have been already told what linear regression is. The most well-known example is having the situation of two continuous variables:
+
+* The "y" variable, which is the outcome or dependent variable
+* And the "x" variable, which is the predictor or the independent variable. 
+
+We can make a mock example to show what we are talking about: 
+
+```{r}
+n <- 50  # number of data points
+x <- runif(n, 1, 10)  # predictor variable (random uniform values between 1 and 10)
+y <- 2 + 3 * x + rnorm(n, mean = 0, sd = 2) 
+
+plot(
+  y ~ x, pch = 19, col = rgb(0, 0, 1, 0.5),
+  xlab = "Predictor (x)", ylab = "Response (y)"
+)
+```
+
+Mathematically, the relationship between these two variables can be expressed as follows: 
+
+$$
+y = \beta_0 + \beta_1 x + \epsilon
+$$
+
+The two $\beta$ variables are the numbers that we want to estimate: 
+
+* $\beta_0$ is the intercept, the value of $y$ when $x = 0$.
+* $\beta_1$ is the slope or the rate of change, how much $y$ changes for every unit increase of $x$.
+
+In our example, we know that $\beta_1$ should be around 3, as it is the factor by which we are multiplying the $x$ variable to simulate the $y$ variable; and $\beta_0$ should be around 2. Let's use the `lm()` function to check it out: 
+
+```{r}
+model <- lm(y ~ x)
+summary(model)
+```
+
+Indeed, these are the results. Now, we can plot the line resulting from the regression model: 
+
+```{r}
+plot(
+  y ~ x, pch = 19, col = rgb(0, 0, 1, 0.5),
+  xlab = "Predictor (x)", ylab = "Response (y)"
+)
+abline(model, col = "red", lwd = 2)
+```
+
+**Note:** of course, we are simplifying the notation, there are other important components in a linear model. In addition, take into account that any model makes assumptions about the data under modelling. For instance, the regular linear model expressed above assumes that our two $y$ and $x$ variables have a linear relationship, and that the residuals (the differences between observed and predicted values) follow a normal distribution, among others. This is important, and whenever you do an analysis, you should take these considerations into account. 
+
+#### Linear model with categorical variables
+
+##### Mean-reference model
+
+Although the previous example can be useful for DEA in some specific cases, such as modeling gene expression at different time points, the most typical situation that we will find is when the $x$ variable is a categorical variable or a factor. For example, imagine that $y$ is gene expression in cells treated or not with a drug:
+
+$$
+y = \beta_0 + \beta_1x_{drug} + \epsilon
+$$
+
+As we said, $x$ is a factor, and hence it can have 2 or more levels. In the context of our example, $x$ is treatment, whose two levels are _drug_ and _control_. Let's graphically represent this situation: 
+
+```{r}
+set.seed(123)
+n <- 20  # number of samples
+data <- data.frame(
+  x = factor(
+    sample(c("control", "drug"), n, replace = TRUE)
+  )
+) %>% mutate(
+  y = ifelse(
+    x == "control", 
+    1 + rnorm(n, mean = 0, sd = 2), 
+    10 + rnorm(n, mean = 0, sd = 2)
+  ),
+)
+plot(
+  data$x, data$y, 
+  main = "Gene expression of yi gene", 
+  xlab = "Group (x)", 
+  ylab = "Response (yi gene)", 
+  pch = 19, 
+  col = rgb(0, 0, 1, 0.2), xaxt = "n",
+  boxlwd = 2, outwex = 0.5, boxwex = 0.2
+)
+points(data$x, data$y, pch = 19, col = rgb(0, 0, 1, 0.8))
+axis(1, at = 1:2, labels = levels(data$x)) 
+```
+
+
+This time, the purpose of the model is not to estimate a slope and the beginning (intercept) of the linear relationship between $y$ and $x$. Here we are modeling the mean values of $y$ in each $x$ level. Mathematically, these levels are encoded as dummy variables made of 0s and 1s. This is automatically done by the ´lm()´ function, but we will see the aspect of these dummy variables with `limma`. Therefore, the two $\beta_0$ and $\beta_1$ estimators mean different things compared with the previous example:
+
+* $\beta_0$, the intercept, will be the mean of the reference group or level, in this case _control_. 
+* This time, $\beta_1$ is the difference between the reference group _control_ and the other group _drug_, which is indeed what we are interested in (the differences between the two groups). 
+
+Let's do the same as before and fit a linear model with these data:  
+
+```{r}
+model.01 <- lm(y ~ x, data = data)
+print(summary(model.01))
+```
+
+We can see how the $\beta_0$ and $\beta_1$ coefficients are indeed what we defined above: 
+
+```{r}
+mean.groups <- data %>% group_by(x) %>% summarize(mean = mean(y)) %>% 
+  pull(mean) %>% setNames(c("control", "drug"))
+message(">>> Mean of Control group: ", round(mean.groups[1], 4))
+message(
+  ">>> Difference between Drug and Control groups: ", 
+  round(mean.groups[2] - mean.groups[1], 4)
+)
+```
+
+
+This is a way of defining a linear model with categorical variables called mean-reference model. However, although for this case it is ideal (1 categorical variable with 2 or ore levels in which one is clearly a reference), this may not be optimal for other situations. Instead of treating one of the levels as a reference, we are going to equally treat all the levels in the ofllowing exmaple. 
+
+##### Means model
+
+The same situation can be also parameterized considering no intercept, and thereby stating in the model the two levels of $x$: 
+
+$$y = \beta_1x_{control} + \beta_2x_{drug} + \epsilon$$
+
+where: 
+
+* $\beta_1$ is the mean of $y$ in the _control_ group.
+* $\beta_2$ is the mean of $y$ in the _drug_ group.
+
+Therefore, in this situation the difference between the two groups is not directly performed, it will be carried out in the next steps. Same as before, we can fit this model as follows: 
+
+```{r}
+model.02 <- lm(y ~ 0 + x, data = data)
+print(summary(model.02))
+```
+
+This time, we don't have intercept, the model is estimating the mean of $y$ in _control_ and _drug_ groups. You can check how these numbers are exactly the same as the ones in the `mean.group` variable: 
+
+```{r}
+mean.groups
+```
+
+Now, we can graphically represent what just happened in these two models: 
+
+```{r}
+plot(
+  data$x, data$y, 
+  main = "Gene expression of yi gene", 
+  xlab = "Group (x)", 
+  ylab = "Response (yi gene)", 
+  pch = 19, 
+  col = rgb(0, 0, 1, 0.2), xaxt = "n",
+  boxlwd = 2, outwex = 0.5, boxwex = 0.2
+)
+points(data$x, data$y, pch = 19, col = rgb(0, 0, 1, 0.8))
+axis(1, at = 1:2, labels = levels(data$x)) 
+
+points(1:2, mean.groups, col = "red", pch = 19, cex = 1.5)
+lines(1:2, mean.groups, col = "red", lwd = 2)
+
+# Add the intercept (mean of reference group)
+intercept <- mean.groups[1]  
+abline(h = intercept, col = "lightblue", lwd = 2, lty = 2)  
+
+# Add the B1 estimator (difference between means of groups "B" and "A")
+b1 <- mean.groups[2] - intercept  
+segments(1, intercept, 2, mean.groups[2], col = "lightgreen", lwd = 2)  
+
+# Annotate the B1 difference with a label
+text(
+  1.5, (intercept + mean.groups[2]) / 2 + 0.2, 
+  labels = paste("drug - control =", round(b1, 2)), 
+  col = "lightgreen", pos = 3
+)
+
+# Add legend
+legend(
+  "bottomright", legend = c("Group means", "Intercept (control)", "drug - control"), 
+  col = c("red", "lightblue", "lightgreen"), 
+  lty = c(1, 2, 1), lwd = c(2, 2, 2), pch = c(19, NA, NA)
+)
+
+```
+
+Here, we are representing: 
+
+* In red, the mean of $y$ in each $x$ group. As we said, there are the $\beta_{control}$ and $\beta_{drug}$ coefficients in the means model. 
+* In blue, the intercept in case of using the mean-reference model, which is the mean of the reference group, in this case the _control_ level. 
+* In green, the $\beta_1$ estimator of the mean-reference model, which is the difference between the mean of the two groups. This is equivalent to the slope of the regression example: it is the rate of change between the two groups.
+
+##### Statistical differences
+
+Beyond estimating the average of $y$ per group, these models are considering the dispersion of each group. We can now use them to test if $y$ is statistically different between _control_ and _drug_. For instance, using the first model, the p-value and t-value associated with the $\beta_1$ coefficient are telling us if these groups are different: 
+
+```{r}
+summary(model.01)
+```
+
+In the case of the second model, as the coefficients are representing the group-specific mean of $y$ for each group, their p-values cannot be interpreted as the difference like above. These p-values test whether the mean response for each group is significantly different from zero (null hypothesis: $\beta_{group} = 0$). This is not our question, the model is not directly modeling the difference between groups. Therefore, we need to use an external way to define this contrast: 
+
+```{r}
+contrasts.example <- contrast::contrast(
+  model.02, 
+  list(x = "drug"),
+  list(x = "control")
+)
+contrasts.example
+```
+You can see how the t- and p-values are exactly the same. This is because under the hood both of them can be used for the same purpose, this time comparing our two groups. 
+
+This is the simplest situation, but the flexibility of linear models stems from its ability to model complex experimental designs. For instance, we could add covariables known to affect gene expression but not interesting for us. In this way, the model would estimate the mean of $y$ per group considering this other source of variability, therefore making these estimates better than without considering the covariable. 
+
+**If the two models are doing the same... What's the difference?**
+
+In this case in which we have one factor or interest made of two levels, these two ways of modeling $y$ are exactly the same: they will yield the very same results, even though may seem different. The mean-reference model (with intercept) will be also a valid option if the factor of interest have more levels but there is a clear reference to compare with. However, this way to model data won't be valid if you need to do all the possible pairwise comparisons and you have more than 2 levels. In this case, you will need to use the means model, as you can define the contrasts you want to perform in the following steps.  
+
+**Disclaimer:** This is just a brief introduction that will serve us to understand `limma`. However, as I said, there are many more things not explained here (they will be explained in other subjects).
+
+
+### Using `limma` for DEA
+
+`limma` implements a set of functions to perform this kind of analysis with transcriptomics data. In particular, for bulk RNA-seq, there are two key differences compared with regular linear models: 
+
+* `limma` was intended to work with microarrays data, which are continuous and follow a normal distribution. Bulk RNA-seq is a bit different, even after all the transformations we explained in the other class. In particular, these data don't follow the rule of Homoscedasticity necessary for linear models to provide reliable p-values. This means that the variance of our data increases with the average. To solve this, `limma` implements the `voom()` function. 
+* `limma` implements and special way to estimate variance optimal for transcriptomics studies in which we have several features but a low number of replicates. In the single-factor experimental design, it is called moderated t-test, and the general idea is that it combines the variance across genes instead of considering the variance of each gene in each test. 
+
+Let's now see how it is the workflow working with `limma`. 
+
+#### Loading data
+
+We are going to continue analyzing the dataset we started the other day. Let's load the objects (if you don't have these objects, ask me): 
+
+```{r}
+dataPath <- file.path(projectPath, "data", "02-data")
+lcpmTMM <- readRDS(file.path(dataPath, "lcpmTMM.rds"))
+rawCounts.filt <- readRDS(file.path(dataPath, "rawCounts.filt.rds"))
+samplesMetadata <- readRDS(file.path(dataPath, "samplesMetadata.rds"))
+bmAnnotations.filt <- readRDS(file.path(dataPath, "bmAnnotations.filt.rds"))
+bmAnnotations.filt <- bmAnnotations.filt %>% 
+  filter(external_gene_name %in% rownames(lcpmTMM))
+```
+
+
+#### Experimental desgin 
+
+First of all, we need to define the experimental design, which is how each sample is going to be treated in the model. This information is contained in the `samplesMetadata` data frame, but we need to encode it in a way that can be used within the linear model. In `limma` (and internally when we were using the `lm()` function), this is done by defining a design matrix, which is going to encode each level of our group as 0s and 1s. This is carried out using the `model.matrix()` function as follows. For simplicity, we are going to only consider the _Condition_ column which encodes cell type and treatment. 
+
+```{r}
+## removing spaces to avoid problems
+samplesMetadata <- samplesMetadata %>% mutate(
+  Condition = Condition %>% str_replace_all(" ", "_")
+)
+rownames(samplesMetadata) <- paste0("Sample_", 1:nrow(samplesMetadata))
+```
+
+
+```{r}
+design <- model.matrix(~ 0 + Condition, data = samplesMetadata)
+colnames(design) <- colnames(design) %>% str_remove("Condition")
+design
+```
+
+1 means that the $i$ sample belongs to the $j$ group. Before, we didn't need to create this matrix, but it is needed in `limma`'s workflow. 
+
+#### Fitting linear models
+
+This step is carried out by the `lmFit()` function. It could be considered the equivalent to the `lm()` function explained above. Keep in mind that this time you are fitting a linear model per gene! the previous example was just an example. 
+
+```{r}
+fit <- lmFit(lcpmTMM, design)
+```
+
+```{r}
+fit$coefficients %>% head()
+```
+
+#### Definition of contrasts
+
+`lmFit()` has estimated the mean of each gene per group. Now, we can define the comparisons per group, which will give us if there is an actual difference between groups in each gene. this is performed by the `makeContrasts()` function: 
+
+```{r}
+contr <- makeContrasts(tolDC_sc - DC_sc, levels = colnames(design))
+contr
+```
+
+The result is a contrast matrix which defines the groups we want to compare. In this particular case, as we are only interested in  _tolDC_sc_ - _DC_sc_, the contrast matrix encodes these groups as 1 and -1 and the _tolDC_siMAFB_ as 0. 
+
+Now, we are going to compute the log fold-changes, which is the statistics that tells us about the effect size, how large the difference between tho two groups is. Considering that we are working on log-transformed data, this is just the difference between the mean expression levels of each gene in each group.
+
+```{r}
+fit.cont <- contrasts.fit(fit, contr)
+fit.cont$coefficients %>% head()
+```
+
+
+#### Empirical Bayes correction 
+
+As we said, this is one of the two key technical advances that `limma` implements. It consists of considering all features (genes) together to estimate the sample variance instead of doing it for each individual gene. The objective is to shrink sample variances toward a common mean, stabilizing variance estimates and improving the reliability of t-tests. It is better than a regular t-test because it improves statistical power, controls false positives, and is more robust when dealing with many features and small sample sizes. This makes `limma` particularly well-suited for high-dimensional data like gene expression studies, where thousands of features need to be tested simultaneously. 
+
+This step is done by the `eBayes()` function as follows: 
+
+```{r}
+fit.cont <- eBayes(fit.cont)
+```
+
+Beyond variances, we have computed the t-values too! Now, we can explore the results. 
+
+#### Checking results and multiple testing
+
+The `topTable()` function allows us to access to the results. Let's check the resulting table: 
+
+```{r}
+deg.contr <- topTable(fit.cont, sort.by = "logFC", n = Inf)
+deg.contr %>% head()
+```
+
+In this table, the columns are: 
+
+* logFC: log fold-changes between the contrasts defined above. In this case, as the contrast was defined as _tolDC_sc_ - _DC_sc_, a positive logFC means that the $i$ gene is up-regulated in the _tolDC_sc_ group, and vice versa. 
+* AveRxpr: average log2-expression across the groups defined in the contrast
+* t: t-value
+* P.Value: raw p-value
+* adj.P.Val: adjusted p-value
+* B: log-odds that the gene is differentially expressed:
+  * Positive B-values: If B > 0, the odds favor the gene being differentially expressed.
+  * Negative B-values: If B < 0, the odds favor the gene not being differentially expressed.
+
+Let's check now how many genes are differentially expressed between these two conditions: 
+
+```{r}
+n.degs <- deg.contr %>% filter(adj.P.Val <= 0.05) %>% nrow()
+n.degs
+```
+
+
+### Plotting results
+
+#### Distribution of p-values
+
+This is a very important plot from my view. It gives you an idea on how well the fitted models behave in our data. I recommend reading [this post](http://varianceexplained.org/statistics/interpreting-pvalue-histogram/) where it is clearly explained. 
+
+
+```{r}
+deg.contr %>% ggplot(aes(x = P.Value)) + 
+  geom_histogram(alpha = 0.8, color = "black") + 
+  geom_vline(xintercept = 0.05, color = "red", linetype = "dashed") + 
+  ggtitle(paste0("tolDC_sc - DC_sc (DEGs: ", n.degs, ")")) + 
+  theme_classic() + theme(plot.title = element_text(face = "bold"))
+```
+
+
+#### Volcano plot
+
+It is an effective way to represent the DEGs between two conditions. It consists of representing the logFCs in the x-axis and the -log10(adj p-values) in the y-axis: 
+
+```{r}
+logfc.cutoff <- 1
+deg.contr <- deg.contr %>% mutate(
+  SYMBOL = rownames(.),
+  Significant = case_when(
+    adj.P.Val <= 0.05 & logFC >= logfc.cutoff ~ "Up-regulated",
+    adj.P.Val <= 0.05 & logFC <= -logfc.cutoff ~ "Down-regulated",
+    TRUE ~ "Non-significant"
+  ) %>% factor(levels = c("Up-regulated", "Down-regulated", "Non-significant"))
+)
+deg.contr %>% ggplot(aes(x = logFC, y = -log10(adj.P.Val), color = Significant)) + 
+  geom_point(alpha = 0.8) + 
+  geom_vline(xintercept = logfc.cutoff, color = "red", linetype = "dashed") + 
+  geom_vline(xintercept = -logfc.cutoff, color = "red", linetype = "dashed") + 
+  geom_hline(yintercept = -log10(0.05), color = "red", linetype = "dashed") + 
+  scale_color_manual(values = c("#a83c32", "#3a6691", "#dbd9d9")) + 
+  ggtitle("tolDC_sc - DC_sc") + theme_classic() + 
+  theme(plot.title = element_text(face = "bold"))
+```
+
+#### Boxplots
+
+```{r}
+top.tol.genes <- deg.contr %>% filter(adj.P.Val <= 0.05) %>% 
+  arrange(desc(logFC)) %>% pull(SYMBOL) %>% head()
+
+df.plot <- t(lcpmTMM[top.tol.genes, ]) %>% cbind(samplesMetadata) 
+top.tol.genes %>% lapply(
+  \(gene) {
+    df.plot %>% ggplot(
+      aes(x = Condition, y = .data[[gene]], fill = Condition)
+    ) + geom_boxplot() + 
+      geom_dotplot(binaxis = 'y', stackdir='center', dotsize=0.5) + 
+      ggtitle(paste0("Expression levels of ", gene, " gene")) + 
+      theme_classic() + theme(plot.title = element_text(face = "bold"))
+  }
+)
+```
+
+
+#### Heatmaps
+
+Finally, this is also a very typical way. Here, we usually represent the z-score of each gene across samples. It is usually made of only significantly different genes: 
+
+```{r}
+samplesMetadata$Condition %>% unique()
+```
+
+
+
+```{r, fig.height=8, fig.width=8}
+genes.to.plot <- deg.contr %>% filter(adj.P.Val <= 0.05, abs(logFC) >= 1) %>% 
+  pull(SYMBOL) 
+
+samplesMetadata.heatmap <- samplesMetadata %>% 
+  filter(Condition %in% c("DC_sc", "tolDC_sc"))
+
+matrix.expr <- t(
+  scale(
+    t(
+      lcpmTMM[genes.to.plot, samplesMetadata.heatmap$Sample.ID]
+    )
+  )
+)
+## order of columns
+samplesMetadata.heatmap <- with(
+  samplesMetadata.heatmap, samplesMetadata.heatmap[order(Condition), ]
+)
+matrix.expr <- matrix.expr[, samplesMetadata.heatmap$Sample.ID]
+
+ha <- HeatmapAnnotation(
+  df = samplesMetadata.heatmap %>% dplyr::select(Condition),
+  col = list(
+    Condition = color.list()[1:2] %>% 
+      setNames(unique(samplesMetadata.heatmap$Condition))
+  ),
+  annotation_name_gp = gpar(fontsize = 10)
+)
+set.seed(1234)
+genes.to.show <- genes.to.plot %>% sample(size = 20)
+hr <- rowAnnotation(
+  link = anno_mark(
+    at = which(rownames(matrix.expr) %in% genes.to.show),
+    labels = genes.to.show,
+    labels_gp = gpar(fontsize = 10),
+    padding = unit(1, "mm")))
+
+Heatmap(
+  matrix.expr, 
+  right_annotation = hr,
+  row_names_gp = gpar(fontsize = 8),
+  column_dend_reorder = FALSE,
+  column_names_gp = gpar(fontsize = 8), 
+  name = "Z-score",
+  column_title_gp = gpar(fontface = "bold"), 
+  cluster_columns = FALSE,
+  show_row_dend = TRUE, 
+  show_column_dend = FALSE,
+  show_row_names = FALSE,
+  show_column_names = FALSE,
+  top_annotation = ha,
+  column_title = paste0("DEGs (", length(genes.to.plot), " genes)"),
+  heatmap_legend_param = list(
+    legend_height = unit(2, "cm"),
+    legend_width = unit(1, "mm"), border = "black"
+  ),
+  border_gp = gpar(col = "black"),
+  row_title = NULL,
+  heatmap_width = unit(100, "mm"),
+  heatmap_height = unit(170, "mm"),
+)
+```
+
+
+You could create custom heatmaps by choosing the genes you want to appear in the heatmap.
+
+## Enrichment analysis
+
+Although obtaining a large list of DEGs usually means good news, it can be also a nightmare. Too many genes can lead to difficulties in interpreting what is going on in our system. To tackle this problem, we can use enrichment analysis, an approach that tries to summarize the information from genes to interpretable pathways or gene-sets. These gene-sets are just groups of genes that are supposed to have a functional connection. For instance, they might belong to the same metabolic pathway (i.e., glycolysis), they can be regulated by the same transcription factor, or just form part of the same signaling pathway. Of note, these methods have several limitations: 
+
+* Gene-sets may sometimes be noisy or incomplete, meaning that within the same gene-set there can be genes that don't belong to that biological process or some that are missing. 
+* They should be interpreted as hints to understand our data. However, from my view they cannot be seen as definitive results, and further analyses should be conducted.  
+
+There are tons of methodologies developed to do so, so in this case we are going to focus on two big groups: over-representation analysis (ORA) and gene-set enrichment analysis (GSEA). 
+
+### Databases
+
+Both of these two big groups require databases containing gene-sets. There are several options, some of them more specialized in a specific topic than others. For this analysis, we are going to use [KEGG](<https://www.genome.jp/kegg/>), [GO](<https://geneontology.org/>), and [MSigDB](<https://www.gsea-msigdb.org/gsea/msigdb>). 
+
+```{r, eval = FALSE}
+genes <- suppressMessages(
+  AnnotationDbi::mapIds(
+    org.Mm.eg.db, 
+    keys = rownames(lcpmTMM), 
+    column = c("REFSEQ"),
+    keytype = "SYMBOL", 
+    multiVals = 'first'
+  )
+)
+genesAnnoDbi <- stack(genes)
+colnames(genesAnnoDbi) <- c("UNIPROT", "SYMBOL")
+```
+
+#### KEGG
+
+The Kyoto Encyclopedia of Genes and Genomes (KEGG) is a comprehensive resource that serves as a knowledge base for understanding high-level functions and utilities of the biological system. KEGG is particularly specialized in integrating genomic, chemical, and systemic functional information. Indeed, one of its most common usages is for metabolism and metabolomics, as it contains several metabolic reactions, including proteins/genes and metabolites. 
+
+```{r}
+tab <- getGeneKEGGLinks(species = "hsa")
+tab$Symbol <- mapIds(
+  org.Hs.eg.db, tab$GeneID,
+  column = "SYMBOL", keytype = "ENTREZID"
+) 
+namesPathways <- getKEGGPathwayNames(species = "hsa")
+rownames(namesPathways) <- namesPathways$PathwayID
+listKegg <- split(tab, f = tab$PathwayID)
+names(listKegg) <- namesPathways[gsub(
+  pattern = "path:", replacement = "", x = names(listKegg)
+), "Description"] %>% gsub(
+  pattern = " - Homo sapiens (human)", replacement = "", x = ., fixed = T
+)
+listKeggmod <- lapply(listKegg, function(x) x[["Symbol"]])
+vec.length <- sapply(listKeggmod, length) 
+listKeggmod <- listKeggmod[vec.length > 5 & vec.length < 500]
+```
+
+
+```{r}
+names(listKeggmod) %>% head()
+```
+
+
+
+```{r, eval = FALSE}
+term2geneKegg <- tab %>% mutate(
+  pathway_name = namesPathways[gsub(
+    pattern = "path:", replacement = "", x = tab$PathwayID
+  ), "Description"] %>% gsub(
+    pattern = " - Mus musculus (house mouse)", 
+    replacement = "", x = ., fixed = T
+  )
+) %>% dplyr::select(pathway_name, Symbol)
+```
+
+
+```{r, eval = FALSE}
+gsea.res.kegg <- lapply(
+  names(list.ordered.zscore.all), \(x) {
+    fgsea(
+      pathways = listKeggmod, 
+      stats = list.ordered.zscore.all[[x]]
+    )    
+  }
+) %>% setNames(names(list.ordered.zscore.all))
+```
+
+
+#### MSigDB
+
+The Molecular Signatures Database (MSigDB) is a specialized bioinformatics resource designed to support gene set enrichment analysis (GSEA) and other functional genomics studies. It is a repository of annotated gene sets that represent prior biological knowledge, such as gene expression signatures, pathways, and phenotypic associations. 
+
+Specifically, we are going to use the Hallmark gene sets, which is a curated set of 50 hallmark pathways that capture key biological processes, such as apoptosis, hypoxia, or immune response. 
+
+```{r}
+msigdb.hs <- getMsigdb(org = 'hs', id = 'SYM')
+msigdb.hs.int.sets <- subsetCollection(
+  gsc = msigdb.hs, collection = c("h")
+)
+msigdb.hs.int.sets.list <- geneIds(msigdb.hs.int.sets)
+vec.length <- sapply(msigdb.hs.int.sets.list, length)
+keep <- vec.length > 5 & vec.length < 500
+msigdb.hs.int.sets.list.filt <- msigdb.hs.int.sets.list[keep]
+msigdb.hs.int.sets.list.df <- stack(msigdb.hs.int.sets.list.filt)[, c(2, 1)]
+```
+
+```{r}
+## example of pathways
+names(msigdb.hs.int.sets.list.filt) %>% head()
+```
+
+
+**Note:** we are using the hallmark genesets, but oyu can check other alternatives by using these functions: 
+
+```{r}
+listCollections(msigdb.hs)
+listSubCollections(msigdb.hs)
+```
+
+#### GO terms
+
+The Gene Ontology (GO) Terms Database is a foundational bioinformatics resource designed to provide a standardized framework for annotating genes and gene products across species. It focuses on defining the roles of genes and proteins in a consistent, hierarchical structure. 
+
+GO is organized into three major ontologies, each capturing a different aspect of gene and protein function:
+
+* **Biological Process (BP)**: Describes the series of events or molecular activities that occur to achieve a specific biological objective, such as cell division, immune response, or metabolic process.
+* **Molecular Function (MF)**: Captures the biochemical activity of a gene product at the molecular level.
+* **Cellular Component (CC)**: Defines where in the cell a gene product is active.
+
+In this case, we are going to download the GO terms for biological processes. At the practical level, there are many ways to access to GO terms from R. Indeed, `limma` provides a way to do it using the same approaches as before, because MSigDB includes a version of the GO database. Anyhow, we are going an alternative way using the `GO.db` R package: 
+
+```{r}
+getGOgenes <- function(
+    OrgDb, 
+    selgo = "All", 
+    keytype = "SYMBOL",
+    ont = "All"
+) {
+  kt <- keytypes(OrgDb)
+  if (!keytype %in% kt) stop("keytype is not supported...")
+  goterms <- AnnotationDbi::Ontology(GO.db::GOTERM)
+  
+  if (selgo != "All") {
+    goterms <- goterms[names(goterms) %in% selgo]
+  }
+  if (ont != "All") {
+    goterms <- goterms[goterms %in% ont]
+  }
+  go2gene <- suppressMessages(
+    AnnotationDbi::mapIds(
+      OrgDb, keys = names(goterms), column = keytype,
+      keytype = "GOALL", multiVals = 'list'
+    )
+  )
+  goAnno <- stack(go2gene)
+  colnames(goAnno) <- c(keytype, "GOALL")
+  goAnno <- unique(goAnno[!is.na(goAnno[,1]), ])
+  goAnno$ONTOLOGYALL <- goterms[goAnno$GOALL]
+  
+  return(list(go2gene, goAnno))
+}
+```
+
+```{r}
+listGoTerms <- getGOgenes(
+  org.Hs.eg.db, selgo = "All", keytype = "SYMBOL", ont = "BP"
+)[[1]] 
+vec.length <- sapply(listGoTerms, length) 
+listGoTerms <- listGoTerms[vec.length >= 5 & vec.length <= 500]
+```
+
+
+
+### ORA: over-representation analysis
+
+Overrepresentation Analysis (ORA) is a widely used statistical method in bioinformatics and systems biology to identify biological themes, pathways, or processes that are significantly enriched in a set of genes or proteins. It is especially valuable for interpreting high-throughput omics data, such as gene expression or proteomics results, by connecting experimental findings to known biological knowledge.
+
+ORA assesses whether gene-sets (grupos of genes with a functional relationship) are overrepresented (statistically enriched) in a subset of genes compared to what would be expected by chance. These categories typically come from curated databases, such as KEGG or Gene Ontology.
+
+For ORA, we are going to use the [`clusterProfiler`](https://learn.gencore.bio.nyu.edu/rna-seq-analysis/gene-set-enrichment-analysis/) R package. There are many other alternatives to do similar analyses, such as [`fgsea`](https://bioconductor.org/packages/release/bioc/html/fgsea.html) (we'll use it for GSEA, but it also implements this analysis) or [`decoupleR`](https://saezlab.github.io/decoupleR/) (it implements many methods, worth checking it). 
+
+#### Picking up group of genes to be tested
+
+First of all, we need to choose a set of genes for each condition according to some criteria. In this case, we are going to use those genes upregulated in each condition using adjusted p-value <= 0.05 and logFC >= 1 (it will depend on the condition). 
+
+Genes upregulated in tolerogenic DCs: 
+
+```{r}
+genes.tol.DCs <- deg.contr %>% filter(adj.P.Val <= 0.05, logFC >= 1) %>% 
+  rownames()
+head(genes.tol.DCs)
+```
+
+Genes upregulated in undifferentiated DCs: 
+
+```{r}
+genes.DCs <- deg.contr %>% filter(adj.P.Val <= 0.05, logFC <= -1) %>% 
+  rownames()
+head(genes.DCs)
+```
+
+
+#### KEGG
+
+Although we have downloaded the KEGG genesets using `limma`, the `clusterProfiler` R package includes functions that directly provide access to this information. The downloaded information will be useful for GSEA anyway.
+
+Importantly, whenever we use `clusterProfiler` functions, it is important to check the `keyType` parameter. This tells the function which notation for genes we use. Depending on the database being used, the acceptable options are different. 
+
+```{r, fig.height=5.5, fig.width=7.5}
+genesENTREZ <- bmAnnotations.filt$entrezgene_id[match(
+  genes.tol.DCs, bmAnnotations.filt$external_gene_name
+)] %>% na.omit()
+ora.kegg.tol.DCs <- enrichKEGG(
+  gene = genesENTREZ,
+  universe = bmAnnotations.filt$entrezgene_id %>% na.omit() %>% 
+    as.character(),
+  keyType = "ncbi-geneid",
+  pvalueCutoff = 0.05, 
+  qvalueCutoff = 0.05
+)    
+barplot(
+  ora.kegg.tol.DCs, 
+  # drop = TRUE, 
+  showCategory = 15,
+  font.size = 8, 
+  title = "KEGG pathways upregulated in tol-DCs (padj <= 0.05 & logFC >= 1)"
+) + theme(plot.title = element_text(face = "bold"))
+```
+
+
+```{r, fig.height=5.5, fig.width=7.5}
+genesENTREZ <- bmAnnotations.filt$entrezgene_id[match(
+  genes.DCs, bmAnnotations.filt$external_gene_name
+)] %>% na.omit()
+ora.kegg.DCs <- enrichKEGG(
+  gene = genesENTREZ,
+  universe = bmAnnotations.filt$entrezgene_id %>% na.omit() %>% 
+    as.character(),
+  keyType = "ncbi-geneid",
+  pvalueCutoff = 0.05, 
+  qvalueCutoff = 0.05
+)    
+barplot(
+  ora.kegg.DCs, 
+  # drop = TRUE, 
+  showCategory = 15,
+  font.size = 8, 
+  title = "KEGG pathways upregulated in undiff DCs (padj <= 0.05 & logFC <= -1)"
+) + theme(plot.title = element_text(face = "bold"))
+```
+
+
+#### GO terms
+
+```{r, fig.height=5.5, fig.width=7.6}
+genesENSEMBL <- bmAnnotations.filt$ensembl[match(
+  genes.tol.DCs, bmAnnotations.filt$external_gene_name
+)] 
+ora.goterms.tol.DCs <- enrichGO(
+  gene = genesENSEMBL,
+  universe = bmAnnotations.filt$ensembl,
+  OrgDb = "org.Hs.eg.db", 
+  keyType = 'ENSEMBL',
+  readable = T,
+  ont = "BP",
+  pvalueCutoff = 0.05, 
+  qvalueCutoff = 0.05
+)    
+barplot(
+  ora.goterms.tol.DCs, 
+  # drop = TRUE, 
+  showCategory = 15,
+  font.size = 8, 
+  title = "GO terms upregulated in tolerogenic DCs (padj <= 0.05 & logFC >= 1)"
+) + theme(plot.title = element_text(face = "bold"))
+```
+
+
+```{r, fig.height=5.5, fig.width=7}
+genesENSEMBL <- bmAnnotations.filt$ensembl[match(
+  genes.DCs, bmAnnotations.filt$external_gene_name
+)] 
+ora.goterms.DCs <- enrichGO(
+  gene = genesENSEMBL,
+  universe = bmAnnotations.filt$ensembl,
+  OrgDb = "org.Hs.eg.db", 
+  keyType = 'ENSEMBL',
+  readable = T,
+  ont = "BP",
+  pvalueCutoff = 0.05, 
+  qvalueCutoff = 0.05
+)    
+barplot(
+  ora.goterms.DCs, 
+  # drop = TRUE, 
+  showCategory = 15,
+  font.size = 8, 
+  title = "GO terms upregulated in DCs (padj <= 0.05 & logFC <= -1)"
+) + theme(plot.title = element_text(face = "bold"))
+```
+
+
+#### MSigDB
+
+This time, we are going to use the data frame containing the MSigDB Hallmarks downloaded before. 
+
+
+```{r}
+msigdb.hs.int.sets.list.df %>% head()
+```
+
+
+```{r, fig.height=5.5, fig.width=7.5}
+MSigDB.goterms.tol.DCs <- enricher(
+  gene = genes.tol.DCs,
+  universe = bmAnnotations.filt$external_gene_name,
+  TERM2GENE = msigdb.hs.int.sets.list.df,
+  pvalueCutoff = 0.05, 
+  qvalueCutoff = 0.05
+)    
+barplot(
+  MSigDB.goterms.tol.DCs, 
+  # drop = TRUE, 
+  showCategory = 15,
+  font.size = 8, 
+  title = "MSigDB upregulated in tol-DCs (padj <= 0.05 & logFC >= 1)"
+) + theme(plot.title = element_text(face = "bold"))
+```
+
+
+```{r, fig.height=5.5, fig.width=7.5}
+MSigDB.goterms.DCs <- enricher(
+  gene = genes.DCs,
+  universe = bmAnnotations.filt$external_gene_name,
+  TERM2GENE = msigdb.hs.int.sets.list.df,
+  pvalueCutoff = 0.05, 
+  qvalueCutoff = 0.05
+)    
+barplot(
+  MSigDB.goterms.DCs, 
+  # drop = TRUE, 
+  showCategory = 15,
+  font.size = 8, 
+  title = "MSigDB upregulated in undiff-DCs (padj <= 0.05 & logFC <= -1)"
+) + theme(plot.title = element_text(face = "bold"))
+```
+
+
+
+### GSEA: gene-set enrichment analysis
+
+Gene Set Enrichment Analysis (GSEA) is a computational method used to determine whether a predefined set of genes (like before) shows statistically significant, coordinated differences in expression between two biological conditions. Unlike traditional overrepresentation analysis (ORA), which focuses only on genes that pass a strict significance threshold, GSEA considers all genes in a dataset, capturing subtle but biologically meaningful patterns of gene expression that may otherwise be overlooked.
+
+GSEA comprises the following key components: 
+
+* Ranked gene list: GSEA starts with a ranked list of genes based on a statistics (e.g., log fold-change or signal-to-noise ratio) between two conditions, rather than relying on a predefined cutoff for significant genes like ORA. 
+* Gene-sets: again, it evaluates the enrichment of predefined gene sets from curated databases. 
+
+We are going to use the `fgsea` R package, which implements a fast version of the algorithm. However, if you are interested in exploring the original algorithm, it is implemented as a GUI here: <https://www.gsea-msigdb.org/gsea/index.jsp>. 
+
+#### Generating ranked gene list
+
+We are going to rank our genes according to logFCs when comparing tol-DCs with undifferentiated DCs. 
+
+```{r}
+ranked.gene.list <- deg.contr %>% dplyr::select(SYMBOL, logFC) %>% 
+  tibble::deframe() %>% sort(decreasing = T)
+head(ranked.gene.list)
+```
+
+
+Therefore, those pathways with a positive NES will be upregulated in tolerogenic DCs, whereas those with negative NES will be upregulated in undifferentiated DCs. 
+
+#### KEGG
+
+```{r}
+fgsea.kegg <- fgsea(
+  pathways = listKeggmod,
+  stats = ranked.gene.list,
+  minSize = 5, 
+  maxSize = 500
+)
+```
+
+Now, we can explore the top pathways enriched in each case: 
+
+
+In tolerogenic DCs: 
+
+
+```{r}
+fgsea.kegg %>% filter(padj <= 0.05, NES > 0) %>% arrange(desc(NES))
+```
+
+And in undifferentiated DCs: 
+
+```{r}
+fgsea.kegg %>% filter(padj <= 0.05, NES < 0) %>% arrange(NES)
+```
+
+We can use several ways to graphically represent these results. For instance, for the pathway with the highest NES in tolerogenic DCs: 
+
+```{r}
+plotEnrichment(
+  listKeggmod[["Complement and coagulation cascades"]],
+  ranked.gene.list
+) + labs(title = "Complement and coagulation cascades")
+```
+
+You can see how most of the genes are located on the left, which leads to its high NES and low adjusted p-values. We can do the same for the undifferentiated DCs: 
+
+```{r}
+plotEnrichment(
+  listKeggmod[["Cell adhesion molecules"]],
+  ranked.gene.list
+) + labs(title = "Cell adhesion molecules")
+```
+
+In addition, the `fgsea` R package provides a way to represent several pathways at once: 
+
+```{r}
+top.pathways.up <- fgsea.kegg %>% filter(padj <= 0.05, NES > 0) %>% 
+  arrange(desc(NES)) %>% pull(pathway)
+top.pathways.down <- fgsea.kegg %>% filter(padj <= 0.05, NES < 0) %>% 
+  arrange(NES) %>% pull(pathway)
+top.pathways <- c(top.pathways.up, top.pathways.down)
+plotGseaTable(
+  listKeggmod[top.pathways], ranked.gene.list, fgsea.kegg, 
+  gseaParam=0.5
+)
+```
+
+Ok!! Now, do the same analysis with the GO terms and MSigDB. 
+
+#### GO terms
+
+```{r}
+
+```
+
+
+#### MSigDB
+
+
+```{r}
+
+```
+
+
+### Other alternatives
+
+As I said, there are many other alternatives:
+
+* `limma` implements several options, such as romer, roast, and camera. Check the corresponding documentation, all these functions are implemented in `limma`. 
+* `decoupleR` is a great tool with access to tons of databases. It implements a methodology based on linear models that I really like. In addition, it also provides access to other method, such as ORA or GSEA. It is available on [R](https://saezlab.github.io/decoupleR/) and [Python](https://decoupler-py.readthedocs.io/en/latest/notebooks/usage.html). 
+* `GSVA`: the main difference with GSEA is that it operates on a per-sample basis, which means that it returns an enrichment score per sample. It might be unstable sometimes, but very useful in case of having complex experimental designs. 
+
+

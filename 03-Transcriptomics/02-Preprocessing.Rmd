@@ -1,0 +1,891 @@
+---
+title: "02 - Preprocessing of expression matrix: Filtering, normalization, and multivariate analyses"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+## general packages
+library("dplyr")
+library("stringr")
+
+## data viz
+library("ggplot2")
+library("ComplexHeatmap")
+library("ggpubr")
+library("RColorBrewer")
+
+## specific to RNA-seq
+library("edgeR")
+
+## gene annotation
+library("biomaRt")
+library("AnnotationDbi")
+
+# project path
+projectPath <- getwd() 
+source(file.path(projectPath, "src", "helperFunctions.R"))
+
+knitr::opts_chunk$set(
+  echo = TRUE, dpi = 300, fig.height = 4, fig.width = 7,
+  base.dir = ".", 
+  # fig.path = file.path(projectPath, "HTMLs", "02-plots/"), 
+  fig.align = "center"
+)
+```
+
+## Introduction 
+
+Once we have already processed the sequencing reads, aligned them to the genome reference, and quantified the number of reads/transcripts per gene, we can start analyzing the resulting expression matrix. Historically, most of the software packages for the steps required from now on are implemented in R, which makes R the preferred option for analyzing transcriptomics data. Nowadays, there are also several options in Python, so if in the future you need to implement a workflow in Python, you will be able to find packages for most of the analyses to be commented in this course. 
+
+## Data to be analyzed
+
+For this analysis, we are going to use a bulk RNA-seq dataset on human dendritic cells (DCs) differentiated _in vitro_ and under dexamethasone treatment, a potent glucocorticoid which leads DCs to obtaining a tolerogenic phenotype. In particular, we are going to analyze the effect of silencing MAFB in the tolerogenic differentiation of DCs, since the authors showed that it seems to be a transcription factor relevant upon dexometasone treatment. You can find the original article [here](https://academic.oup.com/nar/article/50/1/108/6459126). The data are available from GEO through the accession number GSE180540. 
+
+
+**Note 1:** notice that in this paper there is another dataset of microarrays. If you feel confident enough, talk to me and we can explore it too!
+
+**Note 2:** whenever you download public genomics data already processed, the very first thing that you have to check is the genome reference used to align reads. Imagine that you want to integrate this public dataset with another dataset of yours, you need both of them to be in the same version!
+
+## Downloading data 
+
+First of all we need to go to GEO and download the data. We are going to store the online files in the data/02-data path. Please, make sure the paths are correct! After this, the output of the following code should be the name of the downloaded file: 
+
+```{r}
+dataPath <- file.path(projectPath, "data", "02-data")
+( file.counts <- list.files(dataPath, full.names = T, pattern = "GSE180540") )
+```
+
+It seems to be a rectangular format, but we don't know the format the file is. This is very typical with public data: you will find data in different formats, and you will need to figure it out to correctly read the files. I've already done it for you, but for the evaluation exercise you will have to do it on your own! In this case, we are going to create our samples metadata data frame and then read the expression data: 
+
+```{r}
+raw.data <- data.table::fread(file.counts) 
+samplesMetadata <- data.frame(
+  Sample.ID = raw.data %>% colnames() %>% grep("DC", ., value = T),
+  row.names = raw.data %>% colnames() %>% grep("DC", ., value = T)
+) %>% mutate(
+  Condition = Sample.ID %>% str_remove(" [ABCD]$"),
+  Cell_type = Sample.ID %>% str_split_i(" ", 1),
+  Treatment = Sample.ID %>% str_split_i(" ", 2),
+  Replicate = Sample.ID %>% str_split_i(" ", 3)
+)
+rawCounts <- raw.data %>% dplyr::select(
+  matches(samplesMetadata$Sample.ID)
+) %>% as.matrix(rownames = raw.data$Geneid)
+rawCounts <- rawCounts[, samplesMetadata$Sample.ID]
+```
+
+Now, we have the expression matrix:
+
+```{r}
+rawCounts[1:10, 1:5]
+```
+
+And the samples metadata: 
+
+```{r}
+samplesMetadata %>% head()
+```
+
+
+## Filtering lowly expressed genes
+
+First of all, it is a good practice to remove genes with very low expression that introduce noise in the analysis. They won't be very informative and can be problematic for multivariate and differential expression analyses, so it is okay to get rid of them. In addition, considering that our dataset contains genes in the ENSEMBL notation, it is very likely that our matrix contains many rows with no expression, since ENSEMBL references often contain genomic regions that don't correspond to genes. Let's show it: 
+
+Firstly, let's check the number of genes with no expression in any sample: 
+
+```{r}
+## original dimensions: check them:
+
+```
+
+
+```{r}
+message(
+  ">>> % of genes with no expression in any sample: ", 
+  ((sum(rowSums(rawCounts == 0) == ncol(rawCounts)) / nrow(rawCounts)) * 100) %>%
+    round(2)
+)
+```
+
+Around the 50% of genes have no expression. This is likely because the authors used a reference with many non-canonical genes. Let's remove these genes from our matrix: 
+
+```{r}
+rawCounts <- rawCounts[rowSums(rawCounts == 0) != ncol(rawCounts), ]
+## access to the dimensions of this matrix:
+
+```
+
+Now, let's only keep those genes with at least 1 count considering all the samples together: 
+
+```{r}
+rawCounts <- rawCounts[rowSums(rawCounts) > 1, ]
+## access to the dimensions of this matrix:
+
+```
+
+You can see how still we take some genes out. This is just to show you why it is important to check this info before going on with the analysis. 
+
+Now, as genes were provided in ENSEMBL ID, we can convert them into SYMBOL. This is an optional step, since you could continue the analysis using ENSEMBL, which indeed will be required to perform enrichment analyses. However, ENSEMBL IDs are not very interpretable, reason why I usually translate them into SYMBOL at the beginning of the analysis and forget about ENSEMBL. Let's use the `AnnotationDbi` R package to do so:
+
+```{r}
+genesMetadata <- suppressMessages(
+  AnnotationDbi::select(
+    org.Hs.eg.db::org.Hs.eg.db, 
+    keys = rownames(rawCounts), 
+    column = c("SYMBOL", "GENETYPE"),
+    keytype = "ENSEMBL", 
+    multiVals = 'list'
+  )
+)
+genesMetadata %>% head()
+```
+
+You see how some ENSEMBL genes don't have an equivalent in SYMBOL. This is very typical because, as I said, ENSEMBL consider in their references many genomic regions that don't correspond to genes. Let's count and filter them out, since won't be very informative for this analysis. Our question here is about gene expression!
+
+```{r}
+message(">>> Original number of genes: ", nrow(rawCounts))
+message(
+  ">>> Number of genes with SYMBOL: ", 
+  genesMetadata %>% pull(SYMBOL) %>% is.na() %>% `!` %>% sum()
+)
+```
+
+You see how most of them have an equivalent, but some of them don't. Besides the `AnnotationDbi`, I also use `biomaRt` for these kind of things. Just to show you how, let's do it too: 
+
+```{r}
+## this may fail because ensembl servers are often down
+## there is an RDS file with this info in case it fails
+if (file.exists(file.path(dataPath, "biomart-ensembl-genes.rds"))) {
+  bmAnnotations <- readRDS(file.path(dataPath, "biomart-ensembl-genes.rds"))
+} else {
+  ensembl <- useEnsembl(biomart = "genes")
+  ensembl <- useDataset(dataset = "hsapiens_gene_ensembl", mart = ensembl)
+  # to know list of attributes
+  # listAttributes(ensembl)
+  
+  bmAnnotations <- getBM(
+    attributes = c(
+      "external_gene_name", "entrezgene_id",
+      "entrezgene_trans_name", "entrezgene_accession",
+      "ensembl_gene_id", "gene_biotype", 
+      "chromosome_name", "start_position", 
+      "end_position", "strand", 
+      "description"
+    ), uniqueRows = T, mart = ensembl
+  )  
+  saveRDS(bmAnnotations, file.path(dataPath, "biomart-ensembl-genes.rds"))
+}
+```
+
+In this step, we are losing again some ENSEMBL IDs not found in the `bmAnnotations` data frame:
+
+```{r}
+bmAnnotations.filt <- data.frame(ensembl = rownames(rawCounts)) %>% left_join(
+  bmAnnotations,
+  by = join_by(ensembl == ensembl_gene_id)
+)
+dim(bmAnnotations.filt)
+```
+
+From the retained rows, let's see how many have a SYMBOL:
+
+```{r}
+symbol <- bmAnnotations.filt %>% pull(external_gene_name) 
+missing.symbol <- sum(is.na(symbol)) + sum(na.omit(symbol) == "")
+nrow(bmAnnotations.filt) - missing.symbol
+```
+
+It seems that with `biomaRt` we are able to retain a greater number of genes, so let's use this annotation! This is probably because these data were aligned using an ENSEMBL reference. Do you think there might be another reason for this?  
+
+Anyhow, let's use the latter approach to translate genes: 
+
+```{r}
+bmAnnotations.filt <- bmAnnotations.filt %>% filter(
+  external_gene_name != "", !is.na(external_gene_name)
+) %>% distinct(external_gene_name, .keep_all = T) %>% 
+  dplyr::select(ensembl, external_gene_name, entrezgene_id)
+```
+
+```{r}
+rawCounts <- rawCounts[bmAnnotations.filt$ensembl, ]
+rownames(rawCounts) <- bmAnnotations.filt$external_gene_name
+rawCounts[1:10, 1:10]
+```
+
+Now, in order to keep only meaningful genes, let's use the `filterByExpr()` function to define the final set of genes for downstream analyses: 
+
+```{r}
+genes.to.keep <- filterByExpr(rawCounts, group = samplesMetadata$Condition)
+## considering that the kept genes are TRUEs, write below how would you check how many are kept:
+
+```
+
+Importantly, this filtering step is carried out using counts-per-million (CPMs) and not counts in order to avoid giving preference to samples with large library sizes. See the next section to know what CPMs are. After this, around 14,000 genes will be the ones used for further analyses.
+
+```{r}
+## do you understnaad this line of code? 
+rawCounts.filt <- rawCounts[genes.to.keep, ]
+```
+
+Finally, just to check the distribution of these data, we are going to represent all samples as a histogram: 
+
+```{r}
+hist(
+  rawCounts.filt, breaks = 100, 
+  main = "Histogram or raw counts (all samples together)",
+  col = "lightblue"
+)
+```
+
+You can see how the majority of values are still close to zero. This is far from a normal distribution, a requirement required for many statistical analyses. See the sections below. 
+
+## Intra-sample normalization 
+
+To avoid biases due to the number of reads of each sample, we need to normalize our samples so that the fact that a sample is more sequenced than others by chance does not affect the analysis. Raw counts are not considered for most of the analyses, we usually transform the original data to eliminate this unwanted variability. To do so, we put raw counts onto a scale that accounts for library size differences. The most common transformation is counts-per-million (CPM), which as a unit can be interpreted as how many counts we would get for a gene if the sample had a library size of 1M counts. The formula is as follows: 
+
+$$\text{CPM}_i = \dfrac{r_i}{\dfrac{R}{10^6}} = \dfrac{r_i}{R}\cdot 10^6$$
+
+where
+
+$$R = \sum_{j=1}^n r_j$$
+
+and
+
+$$n = number \ features$$
+To sum up, we are dividing each sample by its total library size and multiplying the result by the same scaling factor, which is $10^6$. 
+
+In addition, another transformation required for many analyses is the log-transformation of CPMs. This step intends to make the data look more like data following a normal distribution, which is required for many statistical analyses such as PCA or differential expression analysis using `limma`. Also, we will use this version of the data for exploratory plots due to following a log-normal distribution. 
+
+Both transformations are carried out by the `cpm()` function. Regarding the log2 transformation, it is important to notice that an offset of $2/L$ (being $L$ the average library size in millions) is added to the matrix to avoid 0 values, which cannot be log-transformed. First of all, let's plot the number of reads per sample to see if there are big differences: 
+
+```{r}
+cat("Library sizes:\n")
+cat("=== Mean lib. size", mean(colSums(rawCounts.filt)) * 1e-6, "\n")
+cat("=== Minimum lib size", min(colSums(rawCounts.filt)) * 1e-6, "\n")
+cat("=== Maximum lib size", max(colSums(rawCounts.filt)) * 1e-6, "\n")
+```
+
+```{r, fig.height=5, fig.width=8}
+## do you understnad the code below???
+dfLibSize <- data.frame(
+  Lib.Size = round(colSums(rawCounts) * 1e-6, 3)
+) %>% cbind(samplesMetadata)
+
+ggplot(dfLibSize, mapping = aes(x = Sample.ID, y = Lib.Size, fill = Condition)) + 
+  geom_bar(stat = "identity", color = "black") + 
+  scale_fill_manual(values = color.list()) + 
+  geom_text(
+    aes(label = Lib.Size), hjust = 0.5, vjust = 2, 
+    color = "white", size = 2.5
+  ) +
+  theme_minimal() + 
+  ggtitle("Lib. size per sample") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold")
+  ) 
+```
+
+
+You can see that the library size of these samples is almost identical. Let's transform our expression matrices before and after gene filtering, and graphically check the distribution in each case. To do so, we are going to use two kinds of graphical representation: a density plo and boxplots: 
+
+```{r}
+cpm.data <- cpm(rawCounts)
+log.cpm.data <- cpm(rawCounts, log = T)
+cpm.filt.data <- cpm(rawCounts.filt)
+log.cpm.filt.data <- cpm(rawCounts.filt, log = T)
+```
+
+```{r}
+plotDensities2 <- function(
+  matrix, 
+  color.by = NULL,
+  title = "", 
+  xlab = "",
+  ylim = 0.27,
+  cols = NULL, 
+  cutoff = NULL
+) {
+  nsamples <- ncol(matrix)
+  plot(density(matrix[, 1]), col = cols[1], 
+       lwd = 2, las = 1, ylim = c(0, ylim), main = "", xlab = "")
+  grid()
+  title(main = title, xlab = xlab)
+  if (!is.null(cutoff)) abline(v = cutoff, lty = 3)
+  for (i in 2:nsamples){
+    den <- density(matrix[, i])
+    lines(den$x, den$y, col = cols[i], lwd = 2)
+  }
+}
+```
+
+
+```{r, fig.width=10, fig.height=8}
+par(mfrow = c(2, 2), mar = c(4.1, 4.1, 1.4, 1.8), mgp = c(2.1, 1, 0))
+## CPMs
+plotDensities2(
+  cpm.data, title = "A. CPMs before filtering",# ylim = 0.55,
+  xlab = "CPM", cols = color.list()
+)
+plotDensities2(
+  cpm.filt.data, title = "B. CPMs after filtering",
+  xlab = "CPM", cols = color.list()
+)
+## logCPMs
+plotDensities2(
+  log.cpm.data, title = "C. logCPMs before filtering",# ylim = 0.55,
+  xlab = "logCPM", cols = color.list()
+)
+plotDensities2(
+  log.cpm.filt.data, title = "D. logCPMs after filtering",
+  xlab = "logCPM", cols = color.list()
+)
+```
+
+You can see how CPM values are skewed towards zero, like raw counts. When we use logarithms to make them look like a normal distribution, you can see how keeping lowly expressed genes strongly alters the global distribution of data. 
+
+
+## Inter-sample normalization 
+
+Besides the effect of differences in library size, there might be other external non-biological factors influencing the expression of individual samples. For instance, samples processed in different batches can have very different expression overall levels. This is not the variability we seek for, and thus we need to normalize the data to ensure that the expression distributions of each sample are similar across the entire dataset. This step intends to make samples comparable to each other. 
+
+The method implemented in `edgeR` to consider these sources of variability is trimmed mean of M-values (TMM) implemented in the `calcNormFactors()` function. It computes a scaling factor per sample that is then used to rescale each sample instead of just using the library sizes (like before). The idea behind TMM is that there can be compositional biases where certain genes have much higher read counts due to technical reasons, and you might not want to use them when calculating the library size. Instead of using the total library size (the sum of the reads for all genes), TMM trims off the most highly variable genes (Trimmed mean of M-values, where M-values are the log fold change between each sample and a reference) and then calculates a normalization factor that is used to adjust the library size when you compute logCPM values. Therefore, it is based on the assumption that most genes are not differentially expressed, and therefore we can use them to make our samples more comparable, since they shouldn't be detected as differentially expressed. 
+
+If you like this topic, here you have a bunch of references and notes: 
+
+* A normalization factor below one indicates that a small number of high count genes are monopolizing the sequencing, causing the counts for other genes to be lower than would
+be given the library size. As a result, the library size will be scaled down, analogous to scaling the counts upwards in that library. 
+* Conversely, a factor above one scales up the library size, analogous to down-scaling the counts.
+* Original paper where TMM was described: <https://link.springer.com/article/10.1186/Gb-2010-11-3-R25>
+* Comparison of different normalization methods for bulk RNA-seq: <https://pmc.ncbi.nlm.nih.gov/articles/PMC6209231/#pone.0206312.ref021>
+
+in practical terms, the steps to normalize our data are as follows. This time, we are going to place the data into a `DGEList` object where expression data and samples metadata will be stored together. 
+
+```{r}
+## log-cpm + tmm
+DGEfiltData <- DGEList(
+  counts = rawCounts.filt,
+  samples = samplesMetadata,
+  group = samplesMetadata$Condition
+)
+DGEfiltData <- calcNormFactors(DGEfiltData, method = "TMM")
+lcpmTMM <- cpm(DGEfiltData, log = TRUE)
+lcpmTMM[1:10, 1:10]
+```
+
+Now, we have our data already processed and normalized. Just to understand what just happened, let's explore the saling factors estimated by TMM:
+
+```{r, fig.height=7, fig.width=7}
+ha <- rowAnnotation(
+  df = samplesMetadata %>% dplyr::select(
+    Cell_type, Treatment, Condition, Replicate
+  ),
+  col = list(
+    Cell_type = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Cell_type)),
+    Treatment = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Treatment)),
+    Condition = color.list()[1:length(unique(samplesMetadata$Condition))] %>% 
+      setNames(unique(samplesMetadata$Condition)),
+    Replicate = color.list()[1:length(unique(samplesMetadata$Replicate))] %>% 
+      setNames(unique(samplesMetadata$Replicate))
+  )
+)
+Heatmap(
+  DGEfiltData$samples[, "norm.factors", drop = FALSE],
+  name = "Norm. factors", #title of legend,
+  row_title = "Samples",
+  row_names_gp = gpar(fontsize = 7),
+  column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+  show_column_names = FALSE,
+  heatmap_width = unit(70, "mm"),
+  column_title = "Norm. factors from TMM model",
+  cell_fun = function(j, i, x, y, width, height, fill) {
+    if(DGEfiltData$samples[, "norm.factors", drop = FALSE][i, j] < 1) {
+      grid.text(
+        sprintf("%.2f", DGEfiltData$samples[, "norm.factors", drop = FALSE][i, j]), x, y, 
+        gp = gpar(fontsize = 8, col = "white")
+      )  
+    } else {
+      grid.text(
+        sprintf("%.2f", DGEfiltData$samples[, "norm.factors", drop = FALSE][i, j]), x, y, 
+        gp = gpar(fontsize = 8, col = "black")
+      )
+    }
+  },
+  right_annotation = ha,
+  border = T
+)
+```
+
+
+In addition, let's compare the distribution of our samples before and after TMM normalization: 
+
+```{r, fig.width=10, fig.height=6}
+par(mfrow = c(2, 2), mar = c(1.1, 4.1, 1.4, 1.8), mgp = c(1.1, 1, 0))
+boxplot(
+  rawCounts.filt, col = color.list(),
+  cex.axis = 0.7, las = 2, 
+  main = "A. Raw counts", cex.main = 0.9, xaxt='n'
+)
+boxplot(
+  cpm.filt.data, col = color.list(), 
+  cex.axis = 0.7, las = 2, main = "B. CPM", cex.main = 0.9, xaxt='n'
+)
+
+boxplot(
+  log.cpm.filt.data, col = color.list(), 
+  cex.axis = 0.7, las = 2, main = "C. Log-CPM", cex.main = 0.9, xaxt='n'
+)
+abline(h = median(log.cpm.filt.data), col="blue")
+boxplot(
+  lcpmTMM, col = color.list(),
+  cex.axis = 0.7, las = 2, main = "D. TMM + log-CPM", cex.main = 0.9, xaxt='n'
+)
+abline(h = median(lcpmTMM), col="blue")
+```
+
+You can see the effect of each step of normalization in our data. Particularly, TMM is forcing the medians of our data to be more similar, so that unwanted variability is taken out. In this dataset, there are no big differences across samples, however you will find other situations where this will be different. 
+
+## Unsupervised multivariate analysis: Principal Component Analysis (PCA)
+
+From my view, this is one of the most important analysis, since it tells us many things about our data. Wiht multivariate analyses, I mostly refer to dimensional reduction techniques. In this context, whey are useful because: 
+
+* They are a way to graphically represent the main tendencies in our data
+* They allow us to assess the quality of the replicates
+* They can be used to understand the main sources of variability leading these tendencies
+
+In general, dimensional reduction techniques are a family of algorithms whose objective is to summarize the main sources of variability in new features that will now represent our data. I am assuming that you have already been told what PCA is, but otherwise, we will see it with more detail in the Section about single-cell RNA-seq. For now, the two key pieces of information that you have to extract from a PCA plot are: 
+
+* The two PCs explain most of the variance. The percentage of variance explained by each of them should be reported, as it tells you the importance of that component in the dataset. 
+* Considering the previous point, you have to see how the samples are distributed to then interpret the main sources of variability. 
+
+Let's do it. 
+
+### Computing PCA
+
+In R, PCA can be computed using several approaches. For bulk RNA-seq, the `prcomp()` function is more than enough. 
+
+Additionally, there is another aspect important to consider: the input data matrix to be given to `prcomp()`. We are going to use the TMM-normalized logCPM matrix, as it is supposed to be free of unwanted variability. Howe,ver, we need first to scale this matrix, so that every gene shows $\mu=0$ and $\sigma=1$ across samples. Why? 
+
+* Genes can be in different scales, since there are some highly expressed and others that usually show low levels. For instance, transcription factors are known to need low RNA copies to carry out their biological function (after translation, of course). 
+* If we want all the genes to equally contribute to the new dimensional space, we need to rescale them so that all are located onto the same range of numbers. 
+
+This is performed by the `scale()` function. It scales in a column-wise manner, so be careful!
+
+**Exercise:** let's write a function to make a PCA plot using ggplot2. The idea is to take the PCA object returned by `prcomp`, and plot the first two principal components. 
+
+```{r, eval = FALSE}
+plotPCA <- function(
+  pcaObject, col.points, shape.points = NULL, palette,
+  legend.col, point.size = 3, title = "", pcs = c(1, 2)
+){
+  ## extract variance explained by each principal component
+  variance <- round(factoextra::get_eigenvalue(pcaObject)[pcs, 2], 1)
+  ## how to extract the principal components from the object: 
+  data <- data.frame(pcaObject[["x"]])
+  
+  ## write ggplot code below
+  
+  return(p)
+}
+```
+
+```{r}
+PCA.scaled <- prcomp(scale(t(lcpmTMM)))
+```
+
+
+```{r, fig.width=14, fig.height=9.5}
+p1 <- plotPCA(
+  PCA.scaled, col.points = as.factor(samplesMetadata$Condition),
+  palette = color.list(), 
+  legend.col = "Condition",
+  title = "PCA by condition"
+)
+p2 <- plotPCA(
+  PCA.scaled, col.points = as.factor(samplesMetadata$Cell_type),
+  palette = color.list(),
+  legend.col = "Cell type",
+  title = "PCA by cell type"
+)
+p3 <- plotPCA(
+  PCA.scaled, col.points = as.factor(samplesMetadata$Treatment),
+  palette = color.list(),
+  legend.col = "Treatmen",
+  title = "PCA by treatment"
+)
+p4 <- plotPCA(
+  PCA.scaled, 
+  col.points = as.factor(samplesMetadata$Replicate),
+  palette = color.list(),
+  legend.col = "Replicate",
+  title = "PCA by replicate"
+)
+pt <- ggpubr::ggarrange(
+  plotlist = list(p1, p2, p3, p4), 
+  labels = LETTERS[1:4],
+  ncol = 2, nrow = 2
+)
+
+annotate_figure(
+  pt, 
+  top = text_grob("PCA of main changes (data scaled)", face = "bold", size = 14)
+)
+```
+
+What can you tell me about these plots? What do you conclude from this analysis? 
+
+### PCA with no scaled data
+
+Just to compare how it would be without scaling the data, let's skip the scaling step. In this case, one would expect that those genes with the higher expression levels will dominate the principal components: 
+
+
+```{r}
+PCA.no.scaled <- prcomp(t(lcpmTMM))
+```
+
+
+```{r, fig.width=14, fig.height=9.5}
+p1 <- plotPCA(
+  PCA.no.scaled, col.points = as.factor(samplesMetadata$Condition),
+  palette = color.list(), 
+  legend.col = "Condition",
+  title = "PCA by condition"
+)
+p2 <- plotPCA(
+  PCA.no.scaled, col.points = as.factor(samplesMetadata$Cell_type),
+  palette = color.list(),
+  legend.col = "Cell type",
+  title = "PCA by cell type"
+)
+p3 <- plotPCA(
+  PCA.no.scaled, col.points = as.factor(samplesMetadata$Treatment),
+  # shape.points = as.factor(samplesMetadataInt$Time),
+  palette = color.list(),
+  legend.col = "Treatmen",
+  title = "PCA by treatment"
+)
+p4 <- plotPCA(
+  PCA.no.scaled, col.points = as.factor(samplesMetadata$Replicate),
+  palette = color.list(),
+  legend.col = "Replicate",
+  title = "PCA by replicate"
+)
+pt <- ggpubr::ggarrange(
+  plotlist = list(p1, p2, p3, p4), 
+  labels = LETTERS[1:4],
+  ncol = 2, nrow = 2
+)
+
+annotate_figure(
+  pt, 
+  top = text_grob("PCA of main changes (data scaled)", face = "bold", size = 14)
+)
+```
+
+You can see that the plot is practically identical. It is because this is a relatively simple dataset in which the sources of variability are well defined. However, this won't be the case with single-cell data, for instance. 
+
+### Exploring other PCs
+
+Beyond the two first PCs, it is important to check how much variance is explained by further PCs. A quick way to check it out is by plottig the explained variance of each PC as a barplot: 
+
+```{r}
+factoextra::fviz_eig(PCA.scaled) + ggtitle("Explained variance") + 
+  theme(plot.title = element_text(face = "bold"))
+```
+
+You see that PCs above the 6th start being meaningless. However, the 3rd and 4th PCs can still tell us something about our data. Let's plot them: 
+
+
+```{r, fig.width=14, fig.height=9.5}
+p1 <- plotPCA(
+  PCA.scaled, col.points = as.factor(samplesMetadata$Condition),
+  palette = color.list(), 
+  pcs = c(3, 4),
+  legend.col = "Condition",
+  title = "PCA by condition"
+)
+p2 <- plotPCA(
+  PCA.scaled, col.points = as.factor(samplesMetadata$Cell_type),
+  palette = color.list(),
+  pcs = c(3, 4),
+  legend.col = "Cell type",
+  title = "PCA by cell type"
+)
+p3 <- plotPCA(
+  PCA.scaled, col.points = as.factor(samplesMetadata$Treatment),
+  palette = color.list(),
+  pcs = c(3, 4),
+  legend.col = "Treatmen",
+  title = "PCA by treatment"
+)
+p4 <- plotPCA(
+  PCA.scaled, 
+  col.points = as.factor(samplesMetadata$Replicate),
+  palette = color.list(),
+  pcs = c(3, 4),
+  legend.col = "Replicate",
+  title = "PCA by replicate"
+)
+pt <- ggpubr::ggarrange(
+  plotlist = list(p1, p2, p3, p4), 
+  labels = LETTERS[1:4],
+  ncol = 2, nrow = 2
+)
+
+annotate_figure(
+  pt, 
+  top = text_grob("PCA of main changes (data scaled)", face = "bold", size = 14)
+)
+```
+
+
+What about these plots? 
+
+### Exploring the genes leading the two first PCs
+
+We can now check which genes are most relevant for each axis of the two first PCs when data were or not scaled
+
+```{r}
+mm.scaled <- PCA.scaled$rotation[, 1:2] %>% apply(
+  2, \(x) {
+    c(
+      names(x)[order(x, decreasing = T)] %>% head(10),
+      names(x)[order(x, decreasing = F)] %>% head(10)
+    )
+  }
+)
+mm.scaled
+```
+
+
+```{r}
+mm.no.scaled <- PCA.no.scaled$rotation[, 1:2] %>% apply(
+  2, \(x) {
+    c(
+      names(x)[order(x, decreasing = T)] %>% head(10),
+      names(x)[order(x, decreasing = F)] %>% head(10)
+    )
+  }
+)
+mm.no.scaled
+```
+
+You can see how many the genes are different. We can now check the expression levels of the two first just as an exercise to understand the scaling step: 
+
+```{r}
+lcpmTMM[mm.scaled[1:5, 1], ] %>% t() %>% summary()
+```
+
+
+```{r}
+lcpmTMM[mm.no.scaled[1:5, 1], ] %>% t() %>% summary()
+```
+
+
+## Distance or correlation matrix
+
+Another way to get an idea bout how similar our samples are to one another is to compute a distance matrix between samples and plot it as a heatmap. In principle, it should give us the very same information as the PCA, but it is also a good way to represent it. 
+
+### Computing Euclidean distance between samples using transcriptional space
+
+```{r}
+sampleDists <- dist(t(lcpmTMM), method = "euclidean") 
+```
+
+```{r, fig.height=10, fig.width=12}
+ha <- HeatmapAnnotation(
+  df = samplesMetadata %>% dplyr::select(
+    Cell_type, Treatment, Condition, Replicate
+  ),
+  col = list(
+    Cell_type = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Cell_type)),
+    Treatment = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Treatment)),
+    Condition = color.list()[1:length(unique(samplesMetadata$Condition))] %>% 
+      setNames(unique(samplesMetadata$Condition)),
+    Replicate = color.list()[1:length(unique(samplesMetadata$Replicate))] %>% 
+      setNames(unique(samplesMetadata$Replicate))
+  )
+)
+Heatmap(
+  as.matrix(sampleDists),
+  name = "Euclidean\ndistance", 
+  row_names_gp = gpar(fontsize = 10),
+  column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+  show_column_names = FALSE,
+  heatmap_width = unit(240, "mm"),
+  heatmap_height = unit(200, "mm"),
+  column_title = "Euclidean distances in transcriptional space",
+  top_annotation = ha,
+  border = T,
+  col = colorRampPalette(rev(brewer.pal(9, "Blues")))(200)
+)
+```
+
+We could do the same but computing correlations, which is a different metric that tries to answer the same question:
+
+```{r}
+cor.spearman <- cor(lcpmTMM, method = "pearson") 
+```
+
+```{r, fig.height=10, fig.width=12}
+ha <- HeatmapAnnotation(
+  df = samplesMetadata %>% dplyr::select(
+    Cell_type, Treatment, Condition, Replicate
+  ),
+  col = list(
+    Cell_type = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Cell_type)),
+    Treatment = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Treatment)),
+    Condition = color.list()[1:length(unique(samplesMetadata$Condition))] %>% 
+      setNames(unique(samplesMetadata$Condition)),
+    Replicate = color.list()[1:length(unique(samplesMetadata$Replicate))] %>% 
+      setNames(unique(samplesMetadata$Replicate))
+  )
+)
+Heatmap(
+  cor.spearman,
+  name = "Pearson's\ncorrelation", 
+  row_names_gp = gpar(fontsize = 10),
+  column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+  show_column_names = FALSE,
+  heatmap_width = unit(240, "mm"),
+  heatmap_height = unit(200, "mm"),
+  column_title = "Pearson's correlations in transcriptional space",
+  top_annotation = ha,
+  border = T,
+  cell_fun = function(j, i, x, y, width, height, fill) {
+    grid.text(
+      sprintf("%.2f", cor.spearman[i, j]), x, y, 
+      gp = gpar(fontsize = 8, col = "black")
+    )
+  }
+)
+```
+
+
+What could you tell me about these plots? 
+
+### Computing Euclidean distance between samples using PCA space
+
+Now, instead of using the transcriptional space (defined by genes), we are going to use the first 12 principal components to define our samples. PCs are supposed to be a clearner version of our original data, so the results should be pretty similar and less biased due to the number of dimensions. 
+
+```{r}
+sampleDists <- dist(PCA.scaled$x, method = "euclidean") 
+```
+
+```{r, fig.height=10, fig.width=12}
+ha <- HeatmapAnnotation(
+  df = samplesMetadata %>% dplyr::select(
+    Cell_type, Treatment, Condition, Replicate
+  ),
+  col = list(
+    Cell_type = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Cell_type)),
+    Treatment = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Treatment)),
+    Condition = color.list()[1:length(unique(samplesMetadata$Condition))] %>% 
+      setNames(unique(samplesMetadata$Condition)),
+    Replicate = color.list()[1:length(unique(samplesMetadata$Replicate))] %>% 
+      setNames(unique(samplesMetadata$Replicate))
+  )
+)
+Heatmap(
+  as.matrix(sampleDists),
+  name = "Euclidean\ndistance", 
+  row_names_gp = gpar(fontsize = 10),
+  column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+  show_column_names = FALSE,
+  heatmap_width = unit(240, "mm"),
+  heatmap_height = unit(200, "mm"),
+  column_title = "Euclidean distances in PCA space",
+  top_annotation = ha,
+  border = T,
+  col = colorRampPalette(rev(brewer.pal(9, "Blues")))(200)
+)
+```
+
+Again, let's use correlations.
+
+```{r}
+cor.spearman <- cor(t(PCA.scaled$x), method = "pearson") 
+```
+
+```{r, fig.height=10, fig.width=12}
+ha <- HeatmapAnnotation(
+  df = samplesMetadata %>% dplyr::select(
+    Cell_type, Treatment, Condition, Replicate
+  ),
+  col = list(
+    Cell_type = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Cell_type)),
+    Treatment = color.list()[1:length(unique(samplesMetadata$Cell_type))] %>% 
+      setNames(unique(samplesMetadata$Treatment)),
+    Condition = color.list()[1:length(unique(samplesMetadata$Condition))] %>% 
+      setNames(unique(samplesMetadata$Condition)),
+    Replicate = color.list()[1:length(unique(samplesMetadata$Replicate))] %>% 
+      setNames(unique(samplesMetadata$Replicate))
+  )
+)
+Heatmap(
+  cor.spearman,
+  name = "Pearson's\ncorrelation", 
+  row_names_gp = gpar(fontsize = 10),
+  column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+  show_column_names = FALSE,
+  heatmap_width = unit(240, "mm"),
+  heatmap_height = unit(200, "mm"),
+  column_title = "Pearson's correlations in PCA space",
+  top_annotation = ha,
+  border = T,
+  cell_fun = function(j, i, x, y, width, height, fill) {
+    grid.text(
+      sprintf("%.2f", cor.spearman[i, j]), x, y, 
+      gp = gpar(fontsize = 8, col = "black")
+    )
+  }
+)
+```
+
+
+## Saving data
+
+Let's save the normalized data for further analyses in the next section: 
+
+```{r}
+saveRDS(
+  lcpmTMM, file.path(dataPath, "lcpmTMM.rds")
+)
+saveRDS(
+  rawCounts.filt, file.path(dataPath, "rawCounts.filt.rds")
+)
+saveRDS(
+  samplesMetadata, file.path(dataPath, "samplesMetadata.rds")
+)
+saveRDS(
+  DGEfiltData, file.path(dataPath, "DGEfiltData.rds")
+)
+saveRDS(
+  bmAnnotations.filt, file.path(dataPath, "bmAnnotations.filt.rds")
+)
+```
+
+
+
+
