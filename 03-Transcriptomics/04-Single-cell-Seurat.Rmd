@@ -1,0 +1,562 @@
+---
+title: "04 - Analyzing single-cell RNA-seq data using Seurat"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+```
+
+
+## Introduction 
+
+This Rmarkdown is intended to explain how the main steps of a typical single-cell RNA-seq analysis are implemented in Seurat. The theory of every step was already explained in class.
+
+We will be analyzing the typical dataset used to explain the main features of Seurat. It is a dataset of Peripheral Blood Mononuclear Cells (PBMCs) freely available from 10X Genomics. It comprises around 2,700 cells, so it shouldn't be a problem for any computer. The data can be found here: <https://cf.10xgenomics.com/samples/cell/pbmc3k/pbmc3k_filtered_gene_bc_matrices.tar.gz>. Download the file and put it in the data folder of this module. 
+
+Before starting, let's set up the environment with the paths and R packages that we will need: 
+
+```{r}
+## packages needed
+library("Seurat")
+library("dplyr")
+library("ggplot2")
+library("ggvenn")
+library("clustree")
+
+projectPath <- getwd() 
+dataPath <- file.path(projectPath, "data", "04-data")
+```
+
+## Reading data
+
+Seurat provides a function to read data output of the [cellranger](https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/what-is-cell-ranger) pipeline from 10X. There are other formats such as the h5 file format or just rectangular files that would be read using the functions you already know. 
+
+```{r}
+untar(file.path(dataPath, "pbmc3k_filtered_gene_bc_matrices.tar.gz"), exdir = dataPath)
+pbmc.data <- Read10X(data.dir = file.path(dataPath, "filtered_gene_bc_matrices", "hg19"))
+# initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(
+  counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200
+)
+```
+
+
+```{r}
+pbmc
+```
+
+Now, let's explore the aspect of the expression matrix (genes x cells). 
+
+```{r}
+pbmc.data[c("CD3D", "TCL1A", "MS4A1"), 1:20]
+```
+
+In Seurat objects, data are stored in assays which can contain different layers with versions of the same matrix (normalized, scaled...), so that everything is kept on the same object. At the same time, a Seurat object can contain several assays, which is very useful when you have multimodal data such as cell-surface proteins. 
+
+```{r}
+rawCounts <- pbmc@assays$RNA@layers$counts
+rownames(rawCounts) <- rownames(pbmc)
+colnames(rawCounts) <- colnames(pbmc)
+
+rawCounts[c("CD3D", "TCL1A", "MS4A1"), 1:20]
+```
+
+The `.` values in the matrix represents 0s. As single-cell data is very sparse, i.e., many genes have zero expression, it is much more efficient to avoid storing all these values and just keep the information of non-zero values (the location in the rectangular matrix of these values). This format is called sparse-matrix and it allows us to work with a lot of data, since the dense version would occupy much more memory. In R, this is done by the `Matrix` R package, which also implements functions intended to work with this format. In this case, it is not problematic because the number of cells is not very high. 
+
+For instance, in this matrix, the percentage of zeroes (sparsity level) is: 
+
+```{r}
+sum(rawCounts == 0) / prod(dim(rawCounts))
+```
+
+Now, we can see the difference between the sparse and the dense version in terms of memory: 
+
+```{r}
+format(object.size(rawCounts), unit = "Mb")
+format(object.size(as.matrix(rawCounts)), unit = "Mb")
+```
+
+The dense version is about 10 times bigger, which can be problematic during the analysis. 
+
+## Pre-processing workflow 
+
+The main steps are: 
+
+* Selection and filtration of cells based on QC metrics
+* Data normalization and scaling
+* Detection of highly variable features
+* Dimensional reduction using principal component analysis (PCA)
+* Clustering analysis
+* Differential expression analysis comparing clusters and cell type identification 
+
+From this last analysis on, there are many other questions that we could try to answer with single-cell data: changes in cell type proportions between conditions, cell states within big clusters, gene-regulatory networks governing changes, etc.
+
+### QC and selecting cells for further analyses
+
+```{r}
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+```
+
+```{r}
+head(pbmc@meta.data, 5)
+```
+
+
+```{r, fig.height=4.5, fig.width=10}
+# Visualize QC metrics as a violin plot
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+
+
+```{r, fig.height=4.5, fig.width=10}
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+We can grab these data and make our own plots: 
+
+```{r}
+# for the sake of simplcity
+theme_custom <- theme_classic() + theme(plot.title = element_text(face = "bold"))
+```
+
+
+```{r}
+pbmc@meta.data %>% ggplot(aes(x = nCount_RNA, fill = "orig.ident")) + 
+  geom_density(alpha = 0.8) + 
+  geom_vline(xintercept = c(250, 8000), color = "red", linetype = "dashed") + 
+  ggtitle("Distribution of # of UMIs") + theme_custom
+```
+
+
+```{r}
+pbmc@meta.data %>% ggplot(aes(x = nFeature_RNA, fill = "orig.ident")) + 
+  geom_density(alpha = 0.8) + 
+  geom_vline(xintercept = c(200, 2000), color = "red", linetype = "dashed") + 
+  ggtitle("Distribution of # of detected genes") + theme_custom
+```
+
+
+```{r}
+pbmc@meta.data %>% ggplot(aes(x = percent.mt, fill = "orig.ident")) + 
+  geom_density(alpha = 0.8) + 
+  geom_vline(xintercept = 5, color = "red", linetype = "dashed") + 
+  ggtitle("Distribution of # of mt reads") + theme_custom
+```
+
+
+We can check how many cells we removed using these criteria: 
+
+```{r}
+pbmc@meta.data <- pbmc@meta.data %>% mutate(
+  keep_nCount_RNA = ifelse(
+    nCount_RNA >= 250 & nCount_RNA <= 8000, TRUE, FALSE
+  ),
+  keep_nFeature_RNA = ifelse(
+    nFeature_RNA >= 200 & nFeature_RNA <= 2500, TRUE, FALSE
+  ),
+  keep_percent.mt = ifelse(
+    percent.mt <= 5, TRUE, FALSE
+  ),
+  keep_all = keep_nCount_RNA & keep_nFeature_RNA & keep_percent.mt
+)
+```
+
+
+```{r, fig.height=4.5, fig.width=10}
+plot1 <- FeatureScatter(
+  pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt", 
+  group.by = "keep_nCount_RNA"
+)
+plot2 <- FeatureScatter(
+  pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA",
+  group.by = "keep_nCount_RNA"
+)
+plot1 + plot2
+```
+
+```{r, fig.height=4.5, fig.width=10}
+plot1 <- FeatureScatter(
+  pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt", 
+  group.by = "keep_percent.mt"
+)
+plot2 <- FeatureScatter(
+  pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA",
+  group.by = "keep_percent.mt"
+)
+plot1 + plot2
+```
+
+
+```{r}
+vennList <- list(
+  UMIs = colnames(pbmc)[!pbmc$keep_nCount_RNA],
+  Genes = colnames(pbmc)[!pbmc$keep_nFeature_RNA],
+  MT = colnames(pbmc)[!pbmc$keep_percent.mt]
+)
+ggvenn(
+  vennList, 
+  fill_color = c("lightblue", "gold", "lightpink"),
+  text_size = 3.5, set_name_size = 4
+) +
+  ggtitle("Cells removed") + 
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+```
+
+We can now subset the Seurat object to only continue with the cells with high quality: 
+
+```{r}
+pbmc.filt <- subset(pbmc, cells = colnames(pbmc)[pbmc$keep_all])
+```
+
+```{r}
+pbmc
+```
+
+```{r}
+pbmc.filt
+```
+
+
+### Normalizing the data
+
+Like in bulk RNA-seq, there is a bias in the number of reads per cell that is pure technical. To remove it, the default approach is to compute counts-per-10,000 (the scaling factor is different from bulk RNA-seq, where it was 1,000,000), and using logarithms to make the data look like log-normal data. There are more specific and complex approaches that might be interesting depending on the kind of data under analysis, but their are out of the scope of this exercise.
+
+```{r}
+pbmc.filt <- NormalizeData(
+  pbmc.filt, normalization.method = "LogNormalize", scale.factor = 10000
+)
+```
+
+For other approaches, you can check the `SCTransform()` function (<https://satijalab.org/seurat/reference/sctransform>) and <https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1874-1> if interested, 
+
+
+### Identification of highly variable features
+
+RNA-seq data is highly dimensional, which means that we measure several features at once. This is problematic for most of machine learning algorithms (check [the curse of dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality)), and here there is no exception. By default, we usually use the 2,000 most variable genes, which helps to end up having a more meaningful PCA and thus more specific clusters. 
+
+However, this step is critical, and taking the top 2,000 most variable genes might not be ideal many times. Indeed, the way these 2,000 genes are selected is quite important, and although for a regular analysis you won't pay attention to it, when you deal with more complex data this is the first step you shouldn't overlook. 
+
+```{r, fig.height=5, fig.width=7}
+pbmc.filt <- FindVariableFeatures(pbmc.filt, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pbmc.filt), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(pbmc.filt)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+```
+
+### Scaling the data
+
+Now, we need to scale the data, which means to force the variable genes (the ones to be used in further analyses) to have mean = 0 and standard deviation = 1:
+
+* Shifts the expression of each gene, so that the mean expression across cells is 0
+* Scales the expression of each gene, so that the variance across cells is 1
+* This step gives equal weight in downstream analyses, so that highly-expressed genes do not dominate
+* The results of this are stored in `pbmc.filt[["RNA"]]$scale.data`
+* By default, only variable features are scaled. You can specify the `features` argument to scale additional features.
+
+```{r}
+pbmc.filt <- ScaleData(pbmc.filt, features = rownames(pbmc.filt))
+```
+
+In this step, Seurat also implements some ways to remove unwanted variation, such as differences in the MT-genes content or cell cycle. Check `?ScaleData` to get more info. 
+
+### Perform linear dimensional reduction (PCA)
+
+By default, Seurat implements PCA. It does not compute all the principal components (in this case this number would be 2,000) but the number of PCs given in the `npcs` parameter (50 by default). Also, it only takes the most variable genes by default, although again this can be modified. 
+
+```{r}
+pbmc.filt <- RunPCA(pbmc.filt, features = VariableFeatures(object = pbmc.filt))
+```
+
+```{r}
+print(pbmc.filt[["pca"]], dims = 1:5, nfeatures = 5)
+```
+
+Seurat implements some functions to explore the loading vectors of PCA, which might be useful to better understand the variability captured by the model:
+
+```{r, fig.height=12, fig.width=8}
+DimHeatmap(pbmc.filt, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+We can now plot the two first PCs and see the aspect of the data: 
+
+```{r}
+DimPlot(pbmc.filt, reduction = "pca") + NoLegend()
+DimPlot(pbmc.filt, reduction = "pca", dims = c(3, 4)) + NoLegend()
+```
+
+Importantly, unlike in bulk RNA-seq, the amount of information contained in each principal component is not usually much. This is due to the complexity of the data: we have more signals (both biological and technical) and a greater number of samples (cells). We can explore the amount of variability explained by the first 5 principal components as follows: 
+
+```{r}
+mat <- Seurat::GetAssayData(pbmc.filt, assay = "RNA", slot = "scale.data")
+pca <- pbmc.filt@reductions$pca
+
+# Get the total variance:
+total_variance <- sum(matrixStats::rowVars(mat))
+eigValues <- (pca@stdev)^2  ## EigenValues
+(eigValues / total_variance)[1:5]
+```
+
+We have computed the total variability contained in the original data (`scale.data` layer) and checked the variance explained by each eigenvalue. As you can see, it is very low, which is normal considering the complexity.
+
+This reduced space that we have just computed will serve to cluster the cells. We need to compute it because it serves as a cleaner version of the data, since the high sparsity and the high colinearity among genes make difficult to apply clustering analysis to the raw data. Also, we have to choose the number of principal components, since as shown above, probably many PCs would be capturing noise and better if we skip them. To check it out, let's use the elbow plot approach. There are more advanced techniques to do it, but in my experience, the most important aspect is to avoid losing information, so above a certain cutoff the number of dimensions does not affect much downstream analyses. 
+
+```{r}
+ElbowPlot(pbmc.filt, ndims = 50) + geom_vline(
+  xintercept = 10, color = "red", linetype = "dashed"
+)
+```
+
+According to the plot, 10 PCs should be enough. If you are unsure about how many PCs you need for a given dataset, just repeat the analysis with different configurations! You will see that setting a low cutoff is very detrimental for downstream analyses, whereas being too loose might lead to creating noisy clusters. Also, check the genes important in each PC, since there might be rare signals that you could lose and you don't want to. 
+
+The conclusion is that there are no rules for these decisions, the best advice is to check different configurations and also to understand every step you do. For this analysis, let's take 10 PCs. 
+
+### Clustering analysis
+
+Once we have the PCA space, Seurat applies graph-based clustering approaches. Intuitively, the idea is to embed the cells in a K-nearest neighbor (KNN) graph, with edges connecting cells with similar feature expression patterns. This is done by applying KNN to the distance matrix between cells computed in the PCA space + a step of refinement based on Jaccard similarity. This part is implemented in the `FindNeighbors()` function.  
+
+Then, algorithms meant to define groups of nodes highly connected are applied. In particular, Seurat implements several options, being the Louvain algorithm the default one. This is implemented in the `FindClusters()` function. These graph-based approaches does not return a fixed number of clusters, and heavily rely on several hyperparameters, so we need to try different combinations to find the optimal level of granularity.  
+
+Just as an exercise to show how much the granularity changes, we are going to modify the two parameters that most affect the outcome: 
+
+* `k.param` in the `FindNeighbors()` function: this is the number of neighbors per node. Therefore, very high K values will lead to losing small clusters, whereas very low Ks could produce meaningless graph structures. 
+* `resolution` in the `FindClusters()` function: it basically determines how many communities/clusters we obtain after this step. It modifies the behavior of the loss function optimized in the Louvain algorithm by encouraging larger or smaller groups of connected nodes. 
+
+```{r}
+resolutions <- c(0.5, 1, 1.5, 2)
+k.values <- c(10, 20, 50, 100)
+for (k in k.values) {
+  pbmc.filt <- FindNeighbors(
+    pbmc.filt, dims = 1:10, k.param = k, 
+    graph.name = paste("k", k, sep = ".")
+  )
+  
+  for (r in resolutions) {
+    pbmc.filt <- FindClusters(
+      pbmc.filt, resolution = r, graph.name = paste("k", k, sep = ".")
+    )
+  }
+}
+
+```
+
+Now, we have the results stored in the Seurat object. In particular, the clustering results can be found as new columns in the `meta.data` slot. 
+
+```{r}
+pbmc.filt@meta.data %>% select(k.10_res.0.5, k.50_res.0.5) %>% head(n = 5)
+```
+
+We can now plot the cells in the PCA space colored by cluster. Let's pick one of the resolutions:
+
+```{r}
+DimPlot(pbmc.filt, reduction = "pca", group.by = "k.50_res.0.5") 
+```
+
+
+### Non-linear diemnsional reduction: tSNE and UMAP
+
+The PCA (or any other linear dimensional reduction method) is the space that we must use for any downstream analyses such as clustering, trajectory inference, etc. However, plotting the two first PCs does not always yield an intuition about the general aspect of our data. To overcome this problem, there are several algorithms that take the PCA space and try to make it suitable for visualization using non-linear approaches by grouping cells together whenever are similar enough. In particular, in the single-cell filed there are two main algorithms very popular with bioinformaticians: t-Distributed Stochastic Neighbor Embedding (t-SNE) and Uniform Manifold Approximation and Projection (UMAP). The latter is more extensively used nowadays. Let's use them to get a visual idea of the data: 
+
+```{r}
+pbmc.filt <- RunUMAP(pbmc.filt, dims = 1:10)
+```
+
+```{r}
+DimPlot(pbmc.filt, reduction = "umap", group.by = "k.50_res.0.5")
+```
+
+Now, we can clearly see the different clusters in our data. Despite how useful these technologies may seem, they have several limitations, as they try to preserve local relationships but not the global structure of the data. This means that whereas cells near within the same cluster are likely to be very similar, the distance between further cells or between clusters cannot be interpreted due to the non-linear component of these algorithms. From my view, they are useful ways to convey information, as just by looking at one plot you can figure out how many 'general' clusters you have, etc. However, they cannot be overinterpreted or used as input for other analyses, the distances between cells are totally distorted and many times don't mean anything. 
+
+### Choosing final custering resolution 
+
+Now, use the UMAP plot as a general reference, let's see how modifying the clustering parameters affects to the final results: 
+
+```{r, fig.height=4.5, fig.width=12}
+for (k in k.values) {
+  for (res in resolutions) {
+    p1 <- DimPlot(
+      pbmc.filt, 
+      group.by = paste0("k.", k, "_res.", res), 
+      reduction = "pca"
+    ) + ggtitle(paste0("PCA (", paste0("k.", k, "_res.", res), ")"))
+    p2 <- DimPlot(
+      pbmc.filt, 
+      group.by = paste0("k.", k, "_res.", res), 
+      reduction = "umap"
+    ) + ggtitle(paste0("UMAP (", paste0("k.", k, "_res.", res), ")"))
+    print(ggpubr::ggarrange(plotlist = list(p1, p2), ncol = 2, nrow = 1))
+  }
+}
+```
+
+From my view, there is no optimal clustering resolution, it mostly depends on the biological question and the objective. For instance, if I only need to classify the general cell types but don't need to interpret possible cell states within each cluster, it will be better to choose a lower level of granularity. I recommend you to pick 2-4 resolutions that allow to ask your questions and go ahead with them.
+
+A very handy package to explore how different clustering resolutions are is `clustree`. For instance, let's check the differences between resolutions when k = 20: 
+
+```{r, fig.height=7, fig.width=8}
+clustree(pbmc.filt@meta.data, prefix = "k.20_res.")
+```
+
+You can see how between 0.5 and 1 the main difference is that cluster 0 is divided into two clusters. Form there on, the clusters 0, 1 and 6 start getting split. In this analysis, let's pick k.20_res.0.5, as it already contains the main clusters and we don't need to explore cell states for this analysis: 
+
+```{r}
+pbmc.filt@meta.data <- pbmc.filt@meta.data %>% mutate(
+  res.Final = paste0("C.", k.20_res.0.5) %>% as.factor()
+)
+```
+
+
+```{r}
+DimPlot(pbmc.filt, group.by = "res.Final", reduction = "umap")
+```
+
+
+### Identifying cells: finding differentially expressed genes (DEGs)
+
+Now, let's compute the differential expressed genes across clusters. This will allow us to identify the different cell types. To do so, the `FindAllMarkers()` function is used. There is another version that let us compute DEGs between custom groups that can be useful to understand genes changing between cells from different biological conditions: `FindMarkers()`. 
+
+Regarding the statistical models under the hood, you can see the Documentation to see the different options. There are several papers trying to figure out which methods are the most robust in single-cell data, and from my view, a Wilcox test should be enough, at least to find changes between clusters. For more specific questions, such as changes between conditions, more sensitive approaches could be used. Anyhow, these methods yield several false-positive DEGs due to treating cells as individual units or samples, which is problematic sometimes. If you are interested, check these papers: 
+
+* [Confronting false discoveries in single-cell differential expression](https://www.nature.com/articles/s41467-021-25960-2)
+* [Benchmarking integration of single-cell differential expression](https://www.nature.com/articles/s41467-023-37126-3)
+* [Best practices for single-cell analysis across modalities](https://www.nature.com/articles/s41576-023-00586-w)
+* [A comparison of marker gene selection methods for single-cell RNA sequencing data](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-024-03183-0)
+* [Valid Post-clustering Differential Analysis for Single-Cell RNA-Seq](https://www.cell.com/cell-systems/fulltext/S2405-4712(19)30269-8)
+
+**Note:** if you can install the `presto` R package (<https://github.com/immunogenomics/presto>), do it, it will save several minutes of your life. 
+
+```{r}
+## important to set the desired cluster res as identity
+Idents(pbmc.filt) <- pbmc.filt$res.Final
+cluster.markers <- FindAllMarkers(pbmc.filt, only.pos = T)
+```
+
+Now, we can check the top n markers per cluster to start understanding the cell types present in the data:
+
+```{r}
+cluster.markers %>% filter(p_val_adj <= 0.05) %>% 
+  group_by(cluster) %>% top_n(2, avg_log2FC)
+```
+
+Seurat offers several ways to represent these results. Let's plot some genes that we know are differentially expressed in the UMAP representation: 
+
+```{r, fig.height=10, fig.width=12}
+FeaturePlot(
+  pbmc.filt, 
+  features = c(
+    "CD79A", "GNLY", "CD3E", "CD14", "FCER1A", "FCGR3A", "LYZ", "PPBP", "CD8A"
+  )
+)
+```
+
+and make a heatmap with the top genes per cluster: 
+
+```{r, fig.height=12, fig.width=10}
+cluster.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+DoHeatmap(pbmc.filt, features = top10$gene) + NoLegend()
+```
+
+
+
+```{r, fig.width=18, fig.height=5}
+DotPlot(pbmc.filt, features = unique(top10$gene)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10)) 
+```
+
+Finally, if you would need to save the object for future analyses, I recommend using the `saveRDS` function. Indeed, I strongly recommend you to keep different analyses (with different purposes) in different Rmarkdowns, so that it is easier for you to find your code. 
+
+### Cell cycle
+
+A very typical source of variability in single-cell data is the cell cycle. Depending on the biological context we take the data from, it is very likely we will find cells in different phases of the cell cycle. Depending on the biological question, this can be problematic, because we can find situations where the same cell type is split into two cluster just because some cells are dividing. It is up to you to decide if this is relevant information or not. Anyhow, I recommend always checking this info to make sure what we are looking at. Seurat implements the `CellCycleScoring()` function, a very straightforward way to check it. We need first a list of genes for each phase of the cell cycle. Run the following code to do so: 
+
+```{r}
+genesMetadata <- suppressMessages(
+  AnnotationDbi::select(
+    org.Hs.eg.db::org.Hs.eg.db, 
+    keys = rownames(pbmc.filt), 
+    column = c("ENSEMBL", "GENETYPE"),
+    keytype = "SYMBOL", 
+    multiVals = 'list'
+  )
+)
+```
+
+```{r}
+## we download this info from github
+ccFile <- RCurl::getURL("https://raw.githubusercontent.com/hbc/tinyatlas/master/cell_cycle/Homo_sapiens.csv") 
+cellCycleGenes <- read.csv(text = ccFile)
+## there might be some genes with no match. No worries, does not affect much the analysis
+cellCycleGenes.full <- cellCycleGenes %>% 
+  left_join(genesMetadata, by = c("geneID" = "ENSEMBL"))
+# Acquire the S phase genes
+sGenes <- cellCycleGenes.full %>% filter(phase == "S") %>% 
+  pull(SYMBOL) %>% unique() %>% na.omit()
+# Acquire the G2M phase genes        
+g2mGenes <-  cellCycleGenes.full %>% filter(phase == "G2/M") %>% 
+  pull(SYMBOL) %>% unique() %>% na.omit()
+```
+
+Now, we can run the function: 
+
+```{r}
+pbmc.filt <- CellCycleScoring(
+    object = pbmc.filt,
+    g2m.features = g2mGenes,
+    s.features = sGenes
+)
+```
+
+And plot the results:
+
+```{r}
+VlnPlot(
+  pbmc.filt, features = c("S.Score", "G2M.Score"), 
+  group.by = "res.Final", ncol = 2, pt.size = .1
+)
+```
+
+```{r}
+DimPlot(pbmc.filt, reduction = "umap", group.by = "Phase")
+```
+
+
+In tis case, there is no an evident bias in terms of cell cycle, but you will find situations in which this might happen. Always check it out!!
+
+## Further analyses
+
+This is the very basic analysis that you always need to do in single-cell data. However, there are many more analyses that you will need to do depending on the biological question. For instance, with single-cell data you can try to infer cell-to-cell communication events, the gene regulatory networks governing a specific process in different cell types, etc. 
+
+Also, there are other tools that may be useful, such as cell type classifiers, accessory tools for interpreting clustering results, cell doublet detectors, etc. It is a growing field with so many things coming up every day. Check this repo in which you can find most of available tools meant to work with this kind of data if you are interested: <https://github.com/seandavi/awesome-single-cell>.
+
+
+
