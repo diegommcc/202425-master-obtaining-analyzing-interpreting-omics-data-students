@@ -1,0 +1,389 @@
+---
+title: "05 - Deconvolution of Spatial Transcriptomics Data"
+author: "Diego Mañanes"
+date: '`r strftime(Sys.time(), format = "%B %d, %Y")`'
+documentclass: article
+output:
+  html_document:
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+classoption: a4paper
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  dpi = 300,
+  fig.align = "center", 
+  fig.width = 7, 
+  fig.height = 4
+)
+```
+
+## Introduction
+
+In this exercise, we will analyze a spatial transcriptomics dataset (10x Visium) comprising three slides from murine lymph nodes, two of which obtained after a 48-hour infection with _Mycobacterium smegmatis_ (check [original paper](https://www.nature.com/articles/s41587-022-01272-8)). As a reference, we will use the paired single-cell RNA-seq (10x Chromium) data from the same study. The raw data is publicly available on GEO ([GSE173778](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE173778)), but for ease of use, we will download it through the `SpatialDDLSdata` R data package.
+
+Regarding the tools we are going to use, we will be using [SpatialDDLS](https://academic.oup.com/bioinformatics/article/40/2/btae072/7609037) and [RCTD](https://www.nature.com/articles/s41587-021-00830-w). You will need to install them. 
+
+Of course, like for single-cell RNA-seq, when you analyze ST data you need to perform the steps of quality control, you have to normalize and scale your data, etc. All this can be done using Seurat or any other software package meant to work with single-cell data. Check these tutorials in case you are interested: [Seurat tutorial](https://satijalab.org/seurat/articles/spatial_vignette.html) and [Scanpy tutorial](https://scanpy-tutorials.readthedocs.io/en/latest/spatial/basic-analysis.html). In addition, if you think about it, we have another important dimension, which is the spatial location. There are tools meant to work with it to infer spatial patterns, which can be very relevant depending on the tissue. 
+
+## Installing dependencies
+
+### SpatialDDLS
+
+First, you need to install it from CRAN as follows: 
+
+```{r, eval = FALSE}
+install.packages("SpatialDDLS")
+```
+
+
+`SpatialDDLS` requires an environment where all its dependencies are covered. It uses neural networks, and they are implemented using the TensorFlow library, which is in Python. Thereby, we need an environment with a functional Python interpreter and TensorFlow installed. The `SpatialDDLS` provides a function that takes care of all this. 
+
+**Note:** if you don't have miniconda installed, put `install.conda = TRUE`. The `reticulate` R package should install it. 
+
+```{r, eval = FALSE}
+installTFpython(install.conda = TRUE)
+```
+
+If you encounter any problems, let me know. 
+
+### RCTD
+
+Here you can see the [GitHub repository](https://github.com/dmcable/spacexr) where we need to install it from. The following code should be enough: 
+
+```{r, eval = FALSE}
+remotes::install_github("dmcable/spacexr")
+```
+
+
+## Loading data and R packages
+
+Firstly, let's load the required packages and data:
+
+```{r, message = FALSE}
+library("SpatialDDLS")
+library("SingleCellExperiment")
+library("SpatialExperiment")
+library("ggplot2")
+library("ggpubr")
+library("spacexr")
+library("SpatialDDLSdata")
+
+# SingleCellExperiment with scRNA-seq
+data(MouseDLN.SCE) 
+# SpatialExperiment with spatial transcriptomics data
+data(MouseDLN.ST)
+```
+
+Let's explore the spatial transcriptomics data contained in the `MouseDLN.ST` object: 
+
+```{r, spatialdata-cond}
+cbind(spatialCoords(MouseDLN.ST), colData(MouseDLN.ST)) %>% as.data.frame() %>% 
+  ggplot(aes(X0, X1, color = lymph_node)) + 
+  geom_point() + ggtitle("Mouse lymph nodes by condition") + 
+  theme_classic() + coord_fixed()
+```
+
+## Deconvolution using `SpatialDDLS`
+
+In this part, we will use `SpatialDDLS` to deconvolute the ST data using the single-cell RNA-seq data as a reference. 
+
+### Creating a `SpatialDDLS` object
+
+```{r}
+mouseDLN.SDDLS <- createSpatialDDLSobject(
+  sc.data = MouseDLN.SCE, 
+  sc.cell.ID.column = "CellID", 
+  sc.gene.ID.column = "GeneSymbol",
+  sc.cell.type.column = "broad_cell_types",
+  st.data = MouseDLN.ST,
+  st.spot.ID.column = "CellID",
+  st.gene.ID.column = "GeneSymbol",
+  sc.filt.genes.cluster = TRUE, 
+  sc.n.genes.per.cluster = 150,
+  sc.min.mean.counts = 2
+)
+```
+
+We can show some basic information about the object: 
+
+```{r}
+mouseDLN.SDDLS
+```
+
+### Simulation of mixed transcriptional profiles
+
+```{r}
+mouseDLN.SDDLS <- genMixedCellProp(
+  mouseDLN.SDDLS,
+  cell.ID.column = "CellID",
+  cell.type.column = "broad_cell_types",
+  num.sim.spots = 10000,
+  n.cells = 50,
+  min.zero.prop = 5,
+  balanced.type.cells = TRUE
+) %>% simMixedProfiles(threads = 3)
+```
+
+### Training a fully-connected neural network using mixed transcriptional profiles
+
+After generating a set of mixed transcriptional profiles with known cell composition, we can then train a neural network using the training subset and evaluate the model by predicting cell type proportions on the test subset. The trained model can deconvolute the cellular composition of new transcriptional profiles, such as spots in a spatial transcriptomics experiment. 
+
+```{r}
+mouseDLN.SDDLS <- trainDeconvModel(mouseDLN.SDDLS, verbose = TRUE)
+```
+
+```{r}
+mouseDLN.SDDLS
+```
+
+Anyhow, more advanced metrics can be calculated using the `calculateEvalMetrics` function. This function computes mean absolute error (MAE) and mean squared error (MSE) metrics per cell type, providing insight into the model's performance for each cell type. These metrics can be visualized using various functions:
+
+```{r, abserr-celltype}
+mouseDLN.SDDLS <- calculateEvalMetrics(mouseDLN.SDDLS)
+distErrorPlot(
+  mouseDLN.SDDLS,
+  error = "AbsErr",
+  x.by = "CellType",
+  color.by = "CellType", 
+  error.labels = FALSE, 
+  type = "boxplot",
+  size.point = 0.5
+)
+```
+
+```{r, abserr-celltype-sep, fig.height=5, fig.width=8}
+distErrorPlot(
+  mouseDLN.SDDLS,
+  x.by = "pBin",
+  error = "AbsErr",
+  facet.by = "CellType",
+  color.by = "CellType", 
+  error.label = TRUE,
+  type = "boxplot"
+)
+```
+
+
+```{r, corr-pred, fig.height=5, fig.width=8}
+corrExpPredPlot(
+  mouseDLN.SDDLS,
+  color.by = "CellType",
+  facet.by = "CellType",
+  corr = "both", 
+  size.point = 0.5
+)
+```
+
+
+### Deconvolution of the spatial transcriptomics dataset
+
+Finally, we can use our trained model to deconvolute the signals of each spot using the `deconvSpatialDDLS` function. By default, this function uses the trained model to predict cell proportions of two sets of transcriptional profiles obtained from the ST datasets: 
+
+* 'Intrinsic' profiles: these are the actual transcriptional profiles of every spot in the ST dataset. 
+* 'Extrinsic' profiles: these are simulated profiles generated from the surrounding spots of every spot. The concept is to create a set of transcriptional profiles that represent the transcriptional features of the spatial context of each spot. 
+
+The latter can be used to understand how similar each spot is to its neighbors. Considering the hypothesis that we can infer the cellular composition of each spot based on its surroundings given the correlation between spatial location and cell composition/transcriptional features, we can use this information to spatially contextualize our predictions and improve their accuracy. We refer to this process as spatial regularization. 
+
+```{r}
+mouseDLN.SDDLS <- deconvSpatialDDLS(
+  mouseDLN.SDDLS, index.st = 1, k.spots = 6, fast.pca = TRUE
+)
+```
+
+Now, let's project these predicted proportions in the spatial coordinates:
+
+```{r, pred-spatial, fig.height=5.5, fig.width=8}
+plotSpatialPropAll(mouseDLN.SDDLS, index.st = 1)
+```
+
+To reveal hidden patterns in the coordinates caused by using the same color scale, we can utilize the `plotSpatialProp` function to independently plot each cell type:
+
+```{r, pred-spatial-sep,fig.height=7, fig.width=10}
+list.plots <- lapply(
+  X = trained.model(mouseDLN.SDDLS) %>% cell.types(), 
+  FUN = \(x) {
+    plotSpatialProp(
+        mouseDLN.SDDLS, index.st = 1, cell.type = x, size.point = 1,
+        colors = "blues"
+      ) + coord_fixed()
+  }
+)
+ggarrange(plotlist = list.plots[1:4], align = "hv")
+ggarrange(plotlist = list.plots[5:8], align = "hv")
+ggarrange(plotlist = list.plots[9:12], align = "hv")
+```
+
+In addition to the 'regularized' cell proportions, we can plot the predictions calculated for the intrinsic and extrinsic transcriptional profiles. For instance, let's plot those predicted from the extrinsic transcriptional profiles:
+
+```{r, pred-spatial-sep-extrinsic, fig.height=7, fig.width=10}
+list.plots <- lapply(
+  X = trained.model(mouseDLN.SDDLS) %>% cell.types(), 
+  FUN = \(x) {
+    plotSpatialProp(
+        mouseDLN.SDDLS, index.st = 1, cell.type = x, size.point = 1,
+        colors = "blues", prediction = "Extrinsic"
+      ) + coord_fixed()
+  }
+)
+ggarrange(plotlist = list.plots[1:4], align = "hv")
+ggarrange(plotlist = list.plots[5:8], align = "hv")
+ggarrange(plotlist = list.plots[9:12], align = "hv")
+```
+
+As one may expect, the extrinsic predictions are a smoothed version of the final ones. 
+
+
+## Deconvolution using RCTD 
+
+RCTD is another tool for deconvolution of spatial transcriptomics data. It is based on a different algorithm, and in general yields very good results. You can check the original article [here](https://www.nature.com/articles/s41587-021-00830-w). Also, you can check their [vignettes](https://raw.githack.com/dmcable/spacexr/master/vignettes/visium_full_regions.html) to see more examples.
+
+### Preparing single-cell RNA-seq reference data
+
+```{r}
+MouseDLN.SCE
+```
+
+```{r}
+cell.types <- MouseDLN.SCE$broad_cell_types %>% 
+  setNames(rownames(colData(MouseDLN.SCE))) %>% as.factor()
+nUMI <- colSums(MouseDLN.SCE@assays@data[[1]])
+RCTDreference <- Reference(
+  MouseDLN.SCE@assays@data[[1]], cell.types, nUMI
+)
+```
+
+### Preparing ST data
+
+```{r}
+STcounts <- MouseDLN.ST@assays@data[[1]]
+STcoords <- spatialCoords(MouseDLN.ST) %>% as.data.frame()
+STnUMI <- colSums(STcounts) 
+RCTDSpatial <- SpatialRNA(STcoords, STcounts, STnUMI)
+```
+
+
+### Running RCTD
+
+```{r}
+## creating RCTD object
+myRCTD <- create.RCTD(RCTDSpatial, RCTDreference, max_cores = 1)
+```
+
+
+```{r}
+# Running RCTD
+# RCTD mode: full for low-resolution (e.g. Visium) and doublet for high resolution (e.g. Slideseq)
+myRCTD <- run.RCTD(myRCTD, doublet_mode = "full")
+```
+
+
+```{r}
+# Checking results
+results <- myRCTD@results
+norm_weights <- as.matrix(normalize_weights(results$weights))
+```
+
+```{r}
+norm_weights[1:10, 1:10]
+```
+
+
+### Plotting results
+
+```{r}
+cell_types <- c('B cells', 'CD8 T cells')
+barcodes <- colnames(myRCTD@spatialRNA@counts)
+for (i in cell_types) {
+  pp <- plot_puck_continuous(
+    myRCTD@spatialRNA, barcodes, norm_weights[, i], size = 1.4,
+    title = i
+  ) 
+  print(pp)
+}
+```
+
+Now, I want you to plot these results in the same way we did it with `SpatialDDLS`: same color scale, same cell types, etc. Just for practicing!!!
+
+```{r}
+
+```
+
+
+## Correlation between `SpatialDDLS` and `RCTD` predictions 
+
+In order to compare the two tools, compute the correlation between both predictions per cell type. Regarding representation, it is OK to show a correlation matrix or scatter plots per cell type.
+
+```{r}
+
+```
+
+
+## Comparing deconvoluted cell proportions with colocalization of cell markers
+
+Finally, we are going to assess whether there is a collocation between the predicted cell type proportions and the expression of known markers for each cell type. This analysis aims to validate the model's predictions by comparing them with well-established cellular markers, but it does not mean to be a quantitative validation of the model.
+
+```{r}
+customMarkers <- list(
+  "B cells" = c("Cd74", "Cd19", "Cd79a", "Cd79b", "Ly6d"),
+  "CD4 T cells" = c("Cd4", "Lef1", "Fyb"),
+  "CD8 T cells" = c("Cd8b1", "Cd8a", "Trac"),
+  cDC1s = c("Xcr1", "Irf8"),
+  cDC2s = c("Irf4", "Cd4"),
+  "GD T cells" = c("Il7r", "Id2"),
+  Macrophages = c("Lyz2", "Lyz1", "Cd86", "Ly6c1"),
+  "Migratory DCs" = c("Ccl5", "Anxa3", "Fscn1"),
+  Monocytes = c("Fcer1g", "Cst3", "Lst1", "Itgam", "Kit", "Fcgr3"),
+  "NK cells" = c("Nkg7", "Il2rb", "Gzma"),
+  pDCs = c("Siglech", "Plac8", "Ly6c2", "Vtsb", "Zeb2", "Siglech"),
+  Tregs = c("Ikzf2", "Il2ra", "Foxp3")
+) %>% lapply(FUN = function(x) x[x %in% rownames(MouseDLN.ST)])
+```
+
+```{r}
+## calculate z-scores
+exprST <- MouseDLN.ST@assays@data[[1]]
+logCPM <- edgeR::cpm(exprST, log = TRUE)
+meanZscoresCustom <- purrr::map(
+  .x = names(customMarkers), 
+  .f = ~{ colMeans(t(scale(t(logCPM[customMarkers[[.x]], , drop = FALSE])))) }
+) %>% do.call(cbind, .) 
+colnames(meanZscoresCustom) <- names(customMarkers)
+```
+
+
+```{r, zscores, fig.height=8.5, fig.width=12}
+color.z.scores <- rev(
+  colorRampPalette(RColorBrewer::brewer.pal(n = 10, name = "RdBu"))(20)
+)
+st.coor <- SpatialExperiment::spatialCoords(
+  spatial.experiments(object = mouseDLN.SDDLS, index.st = 1)
+)
+colnames(st.coor) <- paste("Spatial", 1:2)
+dfPlotLong <- reshape2::melt(
+  as.data.frame(cbind(st.coor, meanZscoresCustom)), 
+  id.vars = c("Spatial 1", "Spatial 2"), 
+  variable.name = "CellType", value.name = "Zscore"
+)
+dfPlotLong %>% ggplot(
+  aes(x = .data[["Spatial 1"]], y = .data[["Spatial 2"]], color = Zscore)
+) + geom_point(size = 0.5) + theme_classic()  + 
+  ggtitle("Mean z-score of cell type markers") + 
+  scale_color_gradientn(colors = color.z.scores, limit = c(-2, 2)) + 
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title.x = element_blank(), axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(), axis.title.y = element_blank(),
+    axis.text.y = element_blank(), axis.ticks.y = element_blank()
+  ) + coord_fixed() + facet_wrap(~ CellType) 
+```
+
+
